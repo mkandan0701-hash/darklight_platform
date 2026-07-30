@@ -1,0 +1,484 @@
+// Prisma schema for the diaspora chess academy SaaS.
+// Full model reference/rationale lives in chessplay-clone-spec.md at the repo root.
+// Auth: Supabase Auth is used as a standalone identity/JWT provider (see .env.example
+// SUPABASE_* vars). `User.authProviderId` stores the Supabase `auth.users.id` (uuid);
+// a Supabase Auth webhook creates the matching `User` row here on signup.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy & identity
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id         String    @id @default(cuid())
+  name       String
+  subdomain  String    @unique
+  logoUrl    String?
+  brandColor String?
+  timezone   String
+  planTier   PlanTier  @default(STARTER)
+  createdAt  DateTime  @default(now())
+  deletedAt  DateTime?
+
+  users       User[]
+  classrooms  Classroom[]
+  tournaments Tournament[]
+  invoices    Invoice[]
+
+  @@index([subdomain])
+}
+
+enum PlanTier {
+  STARTER
+  GROWTH
+  PRO
+  ENTERPRISE
+}
+
+model User {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id])
+  email          String
+  role           Role
+  timezone       String
+  authProviderId String    @unique
+  createdAt      DateTime  @default(now())
+  deletedAt      DateTime?
+
+  coachProfile   CoachProfile?
+  studentProfile StudentProfile?
+  parentProfile  ParentProfile?
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+enum Role {
+  ACADEMY_ADMIN
+  COACH
+  STUDENT
+  PARENT
+}
+
+model CoachProfile {
+  id       String  @id @default(cuid())
+  userId   String  @unique
+  user     User    @relation(fields: [userId], references: [id])
+  tenantId String
+  fideId   String?
+  uscfId   String?
+  eclId    String?
+  bio      String?
+
+  classrooms      ClassroomCoach[]
+  referenceBoards ReferenceBoard[]
+
+  @@index([tenantId])
+}
+
+model StudentProfile {
+  id             String    @id @default(cuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id])
+  tenantId       String
+  dateOfBirth    DateTime?
+  fideId         String?
+  uscfId         String?
+  eclId          String?
+  lichessHandle  String?
+  chesscomHandle String?
+
+  classrooms     ClassroomStudent[]
+  parents        ParentStudent[]
+  puzzleAttempts PuzzleAttempt[]
+  games          Game[]
+  attendance     AttendanceRecord[]
+  invoices       Invoice[]
+  ratingRecords  RatingRecord[]
+  certificates   Certificate[]
+
+  @@index([tenantId])
+}
+
+model ParentProfile {
+  id       String  @id @default(cuid())
+  userId   String  @unique
+  user     User    @relation(fields: [userId], references: [id])
+  tenantId String
+  phone    String?
+
+  children ParentStudent[]
+
+  @@index([tenantId])
+}
+
+model ParentStudent {
+  id        String         @id @default(cuid())
+  tenantId  String
+  parentId  String
+  studentId String
+  parent    ParentProfile  @relation(fields: [parentId], references: [id])
+  student   StudentProfile @relation(fields: [studentId], references: [id])
+
+  @@unique([parentId, studentId])
+  @@index([tenantId])
+}
+
+// ---------------------------------------------------------------------------
+// Classrooms, sessions, homework
+// ---------------------------------------------------------------------------
+
+model Classroom {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  name         String
+  weekendFirst Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  coaches      ClassroomCoach[]
+  students     ClassroomStudent[]
+  liveSessions LiveSession[]
+  assignments  Assignment[]
+
+  @@index([tenantId])
+}
+
+model ClassroomCoach {
+  id          String       @id @default(cuid())
+  tenantId    String
+  classroomId String
+  coachId     String
+  classroom   Classroom    @relation(fields: [classroomId], references: [id])
+  coach       CoachProfile @relation(fields: [coachId], references: [id])
+
+  @@unique([classroomId, coachId])
+  @@index([tenantId])
+}
+
+model ClassroomStudent {
+  id          String         @id @default(cuid())
+  tenantId    String
+  classroomId String
+  studentId   String
+  classroom   Classroom      @relation(fields: [classroomId], references: [id])
+  student     StudentProfile @relation(fields: [studentId], references: [id])
+  enrolledAt  DateTime       @default(now())
+
+  @@unique([classroomId, studentId])
+  @@index([tenantId])
+}
+
+model LiveSession {
+  id             String        @id @default(cuid())
+  tenantId       String
+  classroomId    String
+  classroom      Classroom     @relation(fields: [classroomId], references: [id])
+  scheduledAtUtc DateTime
+  durationMins   Int
+  socketRoomId   String        @unique
+  status         SessionStatus @default(SCHEDULED)
+
+  referenceBoard ReferenceBoard?
+  attendance     AttendanceRecord[]
+
+  @@index([tenantId])
+}
+
+enum SessionStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+model ReferenceBoard {
+  id            String       @id @default(cuid())
+  tenantId      String
+  liveSessionId String       @unique
+  liveSession   LiveSession  @relation(fields: [liveSessionId], references: [id])
+  coachId       String
+  coach         CoachProfile @relation(fields: [coachId], references: [id])
+  fen           String
+
+  @@index([tenantId])
+}
+
+model AttendanceRecord {
+  id            String         @id @default(cuid())
+  tenantId      String
+  liveSessionId String
+  studentId     String
+  liveSession   LiveSession    @relation(fields: [liveSessionId], references: [id])
+  student       StudentProfile @relation(fields: [studentId], references: [id])
+  mode          AttendanceMode
+  present       Boolean
+  markedAtUtc   DateTime       @default(now())
+
+  @@unique([liveSessionId, studentId])
+  @@index([tenantId])
+}
+
+enum AttendanceMode {
+  ONLINE
+  OFFLINE
+}
+
+model Assignment {
+  id          String    @id @default(cuid())
+  tenantId    String
+  classroomId String
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  title       String
+  dueAtUtc    DateTime?
+  createdAt   DateTime  @default(now())
+
+  puzzles AssignmentPuzzle[]
+
+  @@index([tenantId])
+}
+
+// ---------------------------------------------------------------------------
+// Puzzles, games, analysis
+// ---------------------------------------------------------------------------
+
+model Puzzle {
+  id        String   @id @default(cuid())
+  lichessId String   @unique
+  fen       String
+  moves     String
+  rating    Int
+  themes    String[]
+
+  assignments AssignmentPuzzle[]
+  attempts    PuzzleAttempt[]
+}
+
+model AssignmentPuzzle {
+  id           String     @id @default(cuid())
+  tenantId     String
+  assignmentId String
+  puzzleId     String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id])
+  puzzle       Puzzle     @relation(fields: [puzzleId], references: [id])
+
+  @@unique([assignmentId, puzzleId])
+  @@index([tenantId])
+}
+
+model PuzzleAttempt {
+  id             String         @id @default(cuid())
+  tenantId       String
+  studentId      String
+  puzzleId       String
+  student        StudentProfile @relation(fields: [studentId], references: [id])
+  puzzle         Puzzle         @relation(fields: [puzzleId], references: [id])
+  attemptMoves   Json
+  isCorrect      Boolean
+  timeTakenSecs  Int
+  attemptedAtUtc DateTime       @default(now())
+
+  @@index([tenantId])
+  @@index([studentId, puzzleId])
+}
+
+model Game {
+  id          String         @id @default(cuid())
+  tenantId    String
+  studentId   String
+  student     StudentProfile @relation(fields: [studentId], references: [id])
+  source      GameSource
+  externalId  String?
+  pgn         String
+  playedAtUtc DateTime
+  result      String
+
+  analysis GameAnalysis?
+
+  @@unique([source, externalId])
+  @@index([tenantId])
+}
+
+enum GameSource {
+  PLATFORM
+  LICHESS
+  CHESSCOM
+}
+
+model GameAnalysis {
+  id             String         @id @default(cuid())
+  tenantId       String
+  gameId         String         @unique
+  game           Game           @relation(fields: [gameId], references: [id])
+  engineDepth    Int
+  accuracy       Float?
+  blunders       Json
+  completedAtUtc DateTime?
+  status         AnalysisStatus @default(QUEUED)
+
+  @@index([tenantId])
+}
+
+enum AnalysisStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
+
+model Invoice {
+  id            String          @id @default(cuid())
+  tenantId      String
+  tenant        Tenant          @relation(fields: [tenantId], references: [id])
+  studentId     String
+  student       StudentProfile  @relation(fields: [studentId], references: [id])
+  amount        Int
+  currency      String
+  provider      PaymentProvider
+  providerRef   String
+  fxRateApplied Float?
+  status        InvoiceStatus   @default(PENDING)
+  dueAtUtc      DateTime
+  paidAtUtc     DateTime?
+
+  @@unique([provider, providerRef])
+  @@index([tenantId])
+}
+
+enum PaymentProvider {
+  STRIPE
+  RAZORPAY
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+// ---------------------------------------------------------------------------
+// Wave 4: tournaments, simul, gamification, certificates
+// ---------------------------------------------------------------------------
+
+model Tournament {
+  id           String           @id @default(cuid())
+  tenantId     String
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  name         String
+  format       TournamentFormat
+  socketRoomId String           @unique
+  startsAtUtc  DateTime
+
+  participants TournamentParticipant[]
+  pairings     TournamentPairing[]
+
+  @@index([tenantId])
+}
+
+enum TournamentFormat {
+  SWISS
+  ARENA
+}
+
+model TournamentParticipant {
+  id           String     @id @default(cuid())
+  tenantId     String
+  tournamentId String
+  studentId    String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+  score        Float      @default(0)
+
+  @@unique([tournamentId, studentId])
+  @@index([tenantId])
+}
+
+model TournamentPairing {
+  id           String     @id @default(cuid())
+  tenantId     String
+  tournamentId String
+  round        Int
+  whiteId      String
+  blackId      String?
+  result       String?
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+
+  @@index([tenantId])
+}
+
+model Simul {
+  id          String   @id @default(cuid())
+  tenantId    String
+  coachId     String
+  startsAtUtc DateTime
+
+  boards SimulBoard[]
+
+  @@index([tenantId])
+}
+
+model SimulBoard {
+  id           String @id @default(cuid())
+  tenantId     String
+  simulId      String
+  boardIdx     Int
+  studentId    String
+  socketRoomId String @unique
+  simul        Simul  @relation(fields: [simulId], references: [id])
+
+  @@unique([simulId, boardIdx])
+  @@index([tenantId])
+}
+
+model RatingRecord {
+  id            String         @id @default(cuid())
+  tenantId      String
+  studentId     String
+  student       StudentProfile @relation(fields: [studentId], references: [id])
+  federation    Federation
+  rating        Int
+  recordedAtUtc DateTime       @default(now())
+
+  @@index([tenantId])
+  @@index([studentId, federation])
+}
+
+enum Federation {
+  FIDE
+  USCF
+  ECF
+}
+
+model Certificate {
+  id          String          @id @default(cuid())
+  tenantId    String
+  studentId   String
+  student     StudentProfile  @relation(fields: [studentId], references: [id])
+  type        CertificateType
+  pdfUrl      String
+  issuedAtUtc DateTime        @default(now())
+
+  @@index([tenantId])
+}
+
+enum CertificateType {
+  ATTENDANCE
+  RATING_MILESTONE
+  TOURNAMENT_RESULT
+}

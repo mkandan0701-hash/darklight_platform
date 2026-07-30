@@ -1,0 +1,17 @@
+{
+  "name": "chessplay-clone",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w apps/web",
+    "dev:api": "npm run dev -w apps/api",
+    "build": "npm run build -w packages/db && npm run build -w packages/shared && npm run build -w apps/web && npm run build -w apps/api",
+    "db:generate": "npm run generate -w packages/db",
+    "db:migrate": "npm run migrate -w packages/db",
+    "test": "npm run test --workspaces --if-present"
+  }
+}
