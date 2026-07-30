@@ -120,12 +120,15 @@ export function registerLiveSessionHandlers(io: Server, socket: AuthedSocket) {
         boards.set(payload.liveSessionId, game);
       }
 
-      const move = game.move({
-        from: payload.from,
-        to: payload.to,
-        promotion: payload.promotion,
-      });
-      if (!move) {
+      // chess.js v1 throws on an illegal move rather than returning null/undefined.
+      let move: ReturnType<Chess["move"]>;
+      try {
+        move = game.move({
+          from: payload.from,
+          to: payload.to,
+          promotion: payload.promotion,
+        });
+      } catch {
         ack?.(false, undefined, "illegal move");
         return;
       }
