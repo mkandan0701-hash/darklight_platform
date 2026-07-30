@@ -43,3 +43,61 @@ export async function listTenantMembers(tenantId: string) {
     orderBy: { createdAt: "asc" },
   });
 }
+
+export async function listParentsAndStudents(tenantId: string) {
+  const [parents, students] = await Promise.all([
+    prisma.parentProfile.findMany({
+      where: { tenantId },
+      include: { user: true },
+      orderBy: { user: { email: "asc" } },
+    }),
+    prisma.studentProfile.findMany({
+      where: { tenantId },
+      include: { user: true },
+      orderBy: { user: { email: "asc" } },
+    }),
+  ]);
+  return { parents, students };
+}
+
+export async function listParentStudentLinks(tenantId: string) {
+  return prisma.parentStudent.findMany({
+    where: { tenantId },
+    include: {
+      parent: { include: { user: true } },
+      student: { include: { user: true } },
+    },
+  });
+}
+
+// Idempotent: linking an already-linked parent/student pair returns the
+// existing link rather than erroring (the unique constraint on
+// [parentId, studentId] guards the race between the check and the create).
+export async function linkParentToStudent(input: {
+  tenantId: string;
+  parentProfileId: string;
+  studentProfileId: string;
+}) {
+  const existing = await prisma.parentStudent.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      parentId: input.parentProfileId,
+      studentId: input.studentProfileId,
+    },
+  });
+  if (existing) return existing;
+
+  return prisma.parentStudent.create({
+    data: {
+      tenantId: input.tenantId,
+      parentId: input.parentProfileId,
+      studentId: input.studentProfileId,
+    },
+  });
+}
+
+export async function unlinkParentFromStudent(input: { tenantId: string; linkId: string }) {
+  await prisma.parentStudent.deleteMany({
+    where: { tenantId: input.tenantId, id: input.linkId },
+  });
+}

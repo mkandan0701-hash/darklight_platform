@@ -1,12 +1,21 @@
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { requireRole } from "../../../../lib/auth/requireRole";
-import { listTenantMembers } from "../../../../repositories/userRepository";
+import {
+  listParentsAndStudents,
+  listParentStudentLinks,
+  listTenantMembers,
+} from "../../../../repositories/userRepository";
 import { InviteForm } from "./InviteForm";
+import { ParentStudentLinks } from "./ParentStudentLinks";
 
 export default async function MembersPage() {
   const session = await getCurrentSession();
   requireRole(session, ["ACADEMY_ADMIN"]);
-  const members = await listTenantMembers(session.tenantId);
+  const [members, { parents, students }, links] = await Promise.all([
+    listTenantMembers(session.tenantId),
+    listParentsAndStudents(session.tenantId),
+    listParentStudentLinks(session.tenantId),
+  ]);
 
   return (
     <div>
@@ -30,6 +39,24 @@ export default async function MembersPage() {
           ))}
         </tbody>
       </table>
+
+      <div className="mt-8">
+        <ParentStudentLinks
+          parents={parents.map((parent) => ({
+            profileId: parent.id,
+            email: parent.user.email,
+          }))}
+          students={students.map((student) => ({
+            profileId: student.id,
+            email: student.user.email,
+          }))}
+          links={links.map((link) => ({
+            id: link.id,
+            parentEmail: link.parent.user.email,
+            studentEmail: link.student.user.email,
+          }))}
+        />
+      </div>
     </div>
   );
 }

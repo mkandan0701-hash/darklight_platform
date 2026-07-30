@@ -6,7 +6,11 @@ import { revalidatePath } from "next/cache";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { requireRole } from "../../../../lib/auth/requireRole";
 import { createSupabaseAdminClient } from "../../../../lib/supabase/admin";
-import { createUserWithProfile } from "../../../../repositories/userRepository";
+import {
+  createUserWithProfile,
+  linkParentToStudent,
+  unlinkParentFromStudent,
+} from "../../../../repositories/userRepository";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -53,6 +57,51 @@ export async function inviteMember(formData: FormData): Promise<ActionResult> {
     return { ok: false, error: "Could not finish inviting this member" };
   }
 
+  revalidatePath("/dashboard/members");
+  return { ok: true };
+}
+
+const LinkSchema = z.object({
+  parentProfileId: z.string().min(1, "Select a parent"),
+  studentProfileId: z.string().min(1, "Select a student"),
+});
+
+export async function linkParentStudent(formData: FormData): Promise<ActionResult> {
+  const session = await getCurrentSession();
+  try {
+    requireRole(session, ["ACADEMY_ADMIN"]);
+  } catch {
+    return { ok: false, error: "Only academy admins can link parents to students" };
+  }
+
+  const parsed = LinkSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  try {
+    await linkParentToStudent({
+      tenantId: session.tenantId,
+      parentProfileId: parsed.data.parentProfileId,
+      studentProfileId: parsed.data.studentProfileId,
+    });
+  } catch {
+    return { ok: false, error: "Could not link this parent to this student" };
+  }
+
+  revalidatePath("/dashboard/members");
+  return { ok: true };
+}
+
+export async function unlinkParentStudent(linkId: string): Promise<ActionResult> {
+  const session = await getCurrentSession();
+  try {
+    requireRole(session, ["ACADEMY_ADMIN"]);
+  } catch {
+    return { ok: false, error: "Only academy admins can remove this link" };
+  }
+
+  await unlinkParentFromStudent({ tenantId: session.tenantId, linkId });
   revalidatePath("/dashboard/members");
   return { ok: true };
 }
