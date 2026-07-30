@@ -31,7 +31,7 @@ A chess academy management SaaS platform — feature parity with [ChessPlay.io](
 | Backend | Node.js + Express, TypeScript |
 | Database | PostgreSQL via Prisma |
 | Cache/Queue | Redis + BullMQ |
-| Auth | Clerk or Supabase Auth (TBD in Wave 1) |
+| Auth | Supabase Auth (decided during Wave 1 implementation) |
 | Payments | Stripe India (USD) + Razorpay (INR backup) |
 | Email | Resend |
 | AI (reports) | Claude Haiku via Batch API |
