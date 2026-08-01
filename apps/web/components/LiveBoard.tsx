@@ -5,6 +5,8 @@ import { io, type Socket } from "socket.io-client";
 import { Chess, type Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { createSupabaseBrowserClient } from "../lib/supabase/client";
+import { useElementWidth } from "../lib/useElementWidth";
+import { tryMove } from "../lib/chess/tryMove";
 import type { Role } from "@chessplay-clone/shared";
 
 export function LiveBoard({
@@ -20,6 +22,8 @@ export function LiveBoard({
   const [refFen, setRefFen] = useState(new Chess().fen());
   const socketRef = useRef<Socket | null>(null);
   const isCoach = role === "COACH";
+  const [sharedBoardRef, sharedBoardWidth] = useElementWidth<HTMLDivElement>(360);
+  const [refBoardRef, refBoardWidth] = useElementWidth<HTMLDivElement>(360);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,8 +75,11 @@ export function LiveBoard({
         "ref-board-move",
         (payload: { from: string; to: string; promotion?: string }) => {
           setRefFen((current) => {
+            // Relayed from another client, so it can be illegal on this board
+            // if the two have diverged — and an unguarded chess.js move()
+            // would throw here, inside a setState updater.
             const game = new Chess(current);
-            const move = game.move({
+            const move = tryMove(game, {
               from: payload.from,
               to: payload.to,
               promotion: payload.promotion ?? "q",
@@ -95,7 +102,7 @@ export function LiveBoard({
     // Local legality check for instant UI feedback; the server's `game-state`
     // broadcast remains the authoritative source of truth for `fen`.
     const check = new Chess(fen);
-    const move = check.move({ from: sourceSquare, to: targetSquare, promotion: "q" });
+    const move = tryMove(check, { from: sourceSquare, to: targetSquare, promotion: "q" });
     if (!move) return false;
 
     setFen(check.fen());
@@ -124,25 +131,25 @@ export function LiveBoard({
 
   return (
     <div className="flex flex-wrap gap-8">
-      <div>
-        <h2 className="mb-2 text-sm font-medium text-gray-500">Shared board</h2>
-        <div style={{ width: 360 }}>
-          <Chessboard position={fen} onPieceDrop={handleSharedDrop} boardWidth={360} />
+      <div className="w-full max-w-[420px] sm:w-auto">
+        <h2 className="mb-2 text-sm font-medium text-slate">Shared board</h2>
+        <div ref={sharedBoardRef} className="rounded-xl border border-ink/10 bg-white p-3 shadow-sm">
+          <Chessboard position={fen} onPieceDrop={handleSharedDrop} boardWidth={sharedBoardWidth} />
         </div>
       </div>
       {isCoach && (
-        <div>
-          <h2 className="mb-2 text-sm font-medium text-gray-500">
-            Reference board (coach only)
+        <div className="w-full max-w-[420px] sm:w-auto">
+          <h2 className="mb-2 text-sm font-medium text-slate">
+            Reference board <span className="font-mono text-xs text-gold">(coach only)</span>
           </h2>
-          <div style={{ width: 360 }}>
-            <Chessboard position={refFen} onPieceDrop={handleRefDrop} boardWidth={360} />
+          <div ref={refBoardRef} className="rounded-xl border border-ink/10 bg-white p-3 shadow-sm">
+            <Chessboard position={refFen} onPieceDrop={handleRefDrop} boardWidth={refBoardWidth} />
           </div>
         </div>
       )}
       <div className="w-full text-sm">
-        {!connected && !error && <p className="text-gray-500">Connecting...</p>}
-        {error && <p className="text-red-600">{error}</p>}
+        {!connected && !error && <p className="text-slate">Connecting…</p>}
+        {error && <p className="text-brick">{error}</p>}
       </div>
     </div>
   );
