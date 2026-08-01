@@ -539,6 +539,7 @@ signing secrets, Meta WhatsApp verify token). Never process an unverified webhoo
 |---|---|---|
 | `session:{roomId}` | Coach + student(s) | Shared board sync, chat, arrows |
 | `session:{roomId}:coach` | Coach only | Reference board (coach's prep material) |
+| `session:{roomId}:audio` | Opted-in members of the shared room | WebRTC signalling for voice |
 | `simul:{simulId}:{boardIdx}` | Coach + one student | Parallel simul boards |
 | `tournament:{tournamentId}` | Participants + spectators | Live pairings, results |
 
@@ -559,7 +560,22 @@ Shared room (`session:{roomId}`): `move`, `draw-arrow`, `clear-arrows`, `flip-bo
 `game-state`, `chat-message`.
 
 Coach-only room (`session:{roomId}:coach`): `ref-board-load`, `ref-board-move`,
-`ref-board-clear`.
+`ref-board-clear`, `ref-board-state`.
+
+Audio room (`session:{roomId}:audio`): `audio-join`, `audio-leave`, `audio-signal`,
+`audio-peer-joined`, `audio-peer-left`.
+
+Every inbound payload is Zod-parsed at the handler before it reaches game or DB
+logic, and the schemas accept no author/identity fields — who sent an event is taken
+from the socket's verified session and stamped server-side. `clear-arrows` and
+`flip-board` are coach-only, because both act on every participant's screen.
+
+Audio carries WebRTC signalling only; media flows peer-to-peer and never through the
+server. Joining the shared board does not join audio — that is a separate, explicitly
+user-initiated step, so nobody is on a live microphone by surprise. `audio-signal`
+verifies the target peer is in the same session's audio room before relaying;
+otherwise the target id is an arbitrary socket and the handler becomes a way to push
+an SDP blob at any connected client.
 
 Every `move` event payload `{ from, to, promotion? }` is replayed server-side against
 the authoritative `chess.js` game state for that session before being rebroadcast — a

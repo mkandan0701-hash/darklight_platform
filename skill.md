@@ -36,7 +36,7 @@ Multi-tenant SaaS platform for chess academies, feature-parity with [ChessPlay.i
 | Engine (client) | Stockfish WASM (play vs computer, analysis board) |
 | Engine (server) | Stockfish binary (queued analysis jobs) |
 | Realtime | Socket.io |
-| Audio/Video | `simple-peer` (WebRTC) audio first; Agora video later |
+| Audio/Video | Native `RTCPeerConnection` (WebRTC) audio first; Agora video later |
 | Backend | Node.js + Express, TypeScript |
 | Database | PostgreSQL via Prisma |
 | Cache/Queue | Redis + BullMQ |
@@ -88,7 +88,7 @@ Never hard-delete user-facing data. Use `deletedAt` soft-delete columns.
 - Homework/quizzes with attempt logging (every move tried, not just final).
 - Play vs Stockfish (WASM client).
 - Analysis board.
-- Live session: shared board + `simple-peer` audio.
+- Live session: shared board + native WebRTC audio (see CLAUDE.md §2 for why not `simple-peer`).
 - Coach-only reference board (separate socket room).
 - Time-zone-aware scheduling. **(WEDGE — high priority)**
 - Weekend-first classroom templates. **(WEDGE)**

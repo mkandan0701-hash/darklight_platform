@@ -27,7 +27,7 @@ A chess academy management SaaS platform — feature parity with [ChessPlay.io](
 | Engine (client) | Stockfish WASM (play vs computer, analysis board) |
 | Engine (server) | Stockfish binary (queued analysis jobs) |
 | Realtime | Socket.io |
-| Audio/Video | `simple-peer` (WebRTC) audio first; Agora video later |
+| Audio/Video | Native `RTCPeerConnection` (WebRTC) audio first; Agora video later |
 | Backend | Node.js + Express, TypeScript |
 | Database | PostgreSQL via Prisma |
 | Cache/Queue | Redis + BullMQ |
@@ -38,6 +38,20 @@ A chess academy management SaaS platform — feature parity with [ChessPlay.io](
 | Hosting | Vercel (frontend) + Railway (API + Postgres + Redis) |
 
 Do not swap out any of these without checking first. Every choice was deliberate.
+
+**Audio — decided during Wave 2 implementation.** This row originally read
+`simple-peer`. It was replaced with the browser's native `RTCPeerConnection`
+because simple-peer needs `process`/`buffer`/`readable-stream` polyfills to run
+under Next 14's webpack 5 — a custom webpack block in an otherwise clean
+`next.config.js` — and is effectively unmaintained. Live-session audio has no
+data channels, so the abstraction was worth roughly forty lines of offer/answer
+handling. The implementation is in `apps/web/lib/audio/`.
+
+**Audio is STUN-only today.** There is no TURN relay, so connections behind
+symmetric NAT or a restrictive corporate firewall will fail — realistically
+10–20%, and this product's traffic is India↔US home and office networks. Adding
+TURN (coturn on Railway, or Cloudflare Calls) is a known cost decision, not an
+oversight. See `apps/web/lib/audio/iceServers.ts`.
 
 ---
 
@@ -89,13 +103,34 @@ Rooms per live session:
 |---|---|---|
 | `session:{roomId}` | Coach + student(s) | Shared board sync, chat, arrows |
 | `session:{roomId}:coach` | Coach only | Reference board (coach's prep material) |
+| `session:{roomId}:audio` | Opted-in members of the shared room | WebRTC signalling for voice |
 | `simul:{simulId}:{boardIdx}` | Coach + one student | Simul (many parallel rooms per simul event) |
 | `tournament:{tournamentId}` | Participants + spectators | Live pairings, results |
 
 Enforce role checks on room joins server-side.
 
-Events on the shared room: `move`, `draw-arrow`, `clear-arrows`, `flip-board`, `game-state`, `chat-message`.
-Events on the coach-only room: `ref-board-load`, `ref-board-move`, `ref-board-clear`.
+| Room | Events |
+|---|---|
+| Shared | `move`, `game-state`, `draw-arrow`, `clear-arrows`, `flip-board`, `chat-message` |
+| Coach-only | `ref-board-load`, `ref-board-move`, `ref-board-clear`, `ref-board-state` |
+| Audio | `audio-join`, `audio-leave`, `audio-signal`, `audio-peer-joined`, `audio-peer-left` |
+
+Rules that hold across all of them:
+
+- **Identity is stamped server-side.** Author fields on a broadcast come from
+  the socket's verified session, never the payload — the Zod schemas in
+  `apps/api/src/socket/schemas.ts` reject author fields outright.
+- **Every payload is Zod-parsed** before it reaches game or DB logic. Socket
+  handlers are this service's route boundary (§7).
+- **Coach-only actions** are `clear-arrows` and `flip-board`, because both act
+  on everyone's screen. A student flipping their own view emits nothing.
+- **Audio is a sub-room of the shared room**, so it inherits `join-room`'s
+  classroom-membership check — but joining the board never puts anyone on a
+  live mic. `audio-signal` verifies the target peer is in the *same* call
+  before relaying; without that, the target id is arbitrary and the handler
+  becomes a way to push an SDP blob at any client on the server.
+- **Board state lives in Redis**, not in process memory, and Socket.io runs
+  behind `@socket.io/redis-adapter`. Both are needed together — see spec §3.4.
 
 ---
 
@@ -114,7 +149,7 @@ Do not build out of order. Each wave depends on the previous.
 - Homework/quizzes: assign, submit, attempt logging (log every move).
 - Play vs Stockfish (WASM client-side).
 - Analysis board.
-- Live session with shared board + audio (`simple-peer`).
+- Live session with shared board + audio (native WebRTC — see §2).
 - Coach-only reference board (separate socket room).
 - **Time-zone-aware scheduling** (wedge — high priority).
 - Weekend-first classroom templates (wedge).
