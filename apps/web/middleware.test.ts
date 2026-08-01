@@ -7,7 +7,7 @@ vi.mock("@supabase/ssr", () => ({
   }),
 }));
 
-import { middleware } from "./middleware";
+import { config, middleware } from "./middleware";
 
 function forwardedHeaders(response: Response) {
   const overrideNames = (response.headers.get("x-middleware-override-headers") ?? "")
@@ -66,6 +66,33 @@ describe("middleware", () => {
     const response = await middleware(request);
 
     expect(forwardedHeaders(response).get("x-tenant-subdomain")).toBe("academy1");
+  });
+
+  // Approximate — Next compiles the matcher with path-to-regexp, not RegExp —
+  // but it catches the regression that matters: an asset falling back into the
+  // matcher runs a Supabase getSession() round-trip and writes session cookies
+  // onto a cacheable static file. Silent in dev, expensive in production.
+  describe("matcher", () => {
+    const matches = (pathname: string) =>
+      new RegExp(`^${config.matcher[0]}$`).test(pathname);
+
+    it("skips the vendored Stockfish assets", () => {
+      expect(matches("/engine/stockfish-18-lite-single.wasm")).toBe(false);
+      expect(matches("/engine/stockfish-18-lite-single.js")).toBe(false);
+      expect(matches("/engine/COPYING.txt")).toBe(false);
+    });
+
+    it("still runs on app routes", () => {
+      expect(matches("/dashboard")).toBe(true);
+      expect(matches("/dashboard/play")).toBe(true);
+      expect(matches("/login")).toBe(true);
+      expect(matches("/")).toBe(true);
+    });
+
+    it("still skips Next's own static output", () => {
+      expect(matches("/_next/static/chunks/main.js")).toBe(false);
+      expect(matches("/favicon.ico")).toBe(false);
+    });
   });
 
   it("drops a client-supplied x-tenant-subdomain header entirely on the apex domain", async () => {

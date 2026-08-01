@@ -66,3 +66,67 @@ export function resolveSubdomain(host: string, rootDomain: string): SubdomainRes
   // Unrecognized host — never guess at a tenant.
   return { type: "apex" };
 }
+
+function splitHostPort(host: string): { hostname: string; port: string } {
+  const [hostname = "", port] = host.split(":");
+  return { hostname: hostname.toLowerCase(), port: port ? `:${port}` : "" };
+}
+
+/**
+ * Given any Host header value, return the apex host (root domain + port) that
+ * tenant subdomains hang off, or `null` if this host can't carry them.
+ *
+ * `academy1.chessplayclone.com` -> `chessplayclone.com`
+ * `academy1.localhost:3000`     -> `localhost:3000`
+ * `chessplayclone.com`          -> `chessplayclone.com`
+ * `my-app-abc123.vercel.app`    -> null (preview deploys have no tenant DNS)
+ */
+export function tenantApexHost(host: string, rootDomain: string): string | null {
+  const { hostname, port } = splitHostPort(host);
+  const root = rootDomain.toLowerCase().trim();
+  if (!hostname) return null;
+
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    return `localhost${port}`;
+  }
+
+  // Preview deployments are a single fixed hostname — there is no
+  // `{tenant}.` form of them to point an invitee at.
+  if (hostname === "vercel.app" || hostname.endsWith(".vercel.app")) return null;
+
+  if (!root) return null;
+  if (hostname === root || hostname.endsWith(`.${root}`)) return `${root}${port}`;
+
+  return null;
+}
+
+/**
+ * Build an absolute URL on a *specific tenant's* host, deriving the apex from
+ * the host of the current request so the same code produces
+ * `http://academy1.localhost:3000/...` in dev and
+ * `https://academy1.chessplayclone.com/...` in production.
+ *
+ * Needed because Supabase Auth email links (invites, password resets) are
+ * opened in a fresh browser context — the link itself has to name the tenant's
+ * host, or the recipient lands on the apex where no `Tenant` resolves.
+ *
+ * Returns `null` when the current host can't carry tenant subdomains.
+ */
+export function tenantUrl(input: {
+  host: string;
+  rootDomain: string;
+  subdomain: string;
+  path: string;
+  protocol?: string;
+}): string | null {
+  const apex = tenantApexHost(input.host, input.rootDomain);
+  if (!apex || !input.subdomain) return null;
+
+  // A chained proxy can send `x-forwarded-proto: https,http` — take the
+  // outermost hop, and tolerate a trailing colon (`location.protocol` form).
+  const forwarded = input.protocol?.split(",")[0]?.trim().replace(/:$/, "");
+  const protocol = forwarded || (apex.startsWith("localhost") ? "http" : "https");
+  const path = input.path.startsWith("/") ? input.path : `/${input.path}`;
+
+  return `${protocol}://${input.subdomain}.${apex}${path}`;
+}

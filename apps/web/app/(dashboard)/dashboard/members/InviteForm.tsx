@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from "react";
 import { inviteMember } from "./actions";
+import { Field, fieldInputClass } from "../../../../components/ui/Field";
+import { Button } from "../../../../components/ui/Button";
 
 export function InviteForm() {
   const [error, setError] = useState<string | null>(null);
@@ -17,35 +19,28 @@ export function InviteForm() {
 
   return (
     <form action={handleSubmit} className="flex flex-wrap items-end gap-3">
-      <label className="flex flex-col gap-1 text-sm">
-        Email
-        <input name="email" type="email" required className="rounded border px-3 py-2" />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Role
-        <select name="role" required className="rounded border px-3 py-2">
+      <Field label="Email">
+        <input name="email" type="email" required className={fieldInputClass} />
+      </Field>
+      <Field label="Role">
+        <select name="role" required className={fieldInputClass}>
           <option value="COACH">Coach</option>
           <option value="STUDENT">Student</option>
           <option value="PARENT">Parent</option>
         </select>
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Timezone (IANA)
+      </Field>
+      <Field label="Timezone (IANA)">
         <input
           name="timezone"
           required
           defaultValue="America/New_York"
-          className="rounded border px-3 py-2"
+          className={fieldInputClass}
         />
-      </label>
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-      >
-        {pending ? "Sending..." : "Invite"}
-      </button>
-      {error && <p className="w-full text-sm text-red-600">{error}</p>}
+      </Field>
+      <Button type="submit" disabled={pending}>
+        {pending ? "Sending…" : "Send invite"}
+      </Button>
+      {error && <p className="w-full text-sm text-brick">{error}</p>}
     </form>
   );
 }

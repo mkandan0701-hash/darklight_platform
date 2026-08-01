@@ -7,6 +7,22 @@ import {
 } from "../../../../repositories/userRepository";
 import { InviteForm } from "./InviteForm";
 import { ParentStudentLinks } from "./ParentStudentLinks";
+import { cardClass } from "../../../../components/ui/Card";
+import {
+  pageHeadingClass,
+  tableWrapperClass,
+  tbodyRowClass,
+  tdClass,
+  thClass,
+  theadRowClass,
+} from "../../../../components/ui/styles";
+
+const ROLE_BADGE_CLASS: Record<string, string> = {
+  ACADEMY_ADMIN: "bg-gold-light text-ink",
+  COACH: "bg-board-light text-board-dark",
+  STUDENT: "bg-parchment text-ink",
+  PARENT: "bg-parchment text-ink",
+};
 
 export default async function MembersPage() {
   const session = await getCurrentSession();
@@ -19,26 +35,36 @@ export default async function MembersPage() {
 
   return (
     <div>
-      <h1 className="text-lg font-semibold">Members</h1>
-      <div className="mt-4">
+      <h1 className={pageHeadingClass}>Members</h1>
+      <div className={`mt-4 ${cardClass}`}>
         <InviteForm />
       </div>
-      <table className="mt-6 w-full text-left text-sm">
-        <thead>
-          <tr className="border-b">
-            <th className="py-2">Email</th>
-            <th className="py-2">Role</th>
-          </tr>
-        </thead>
-        <tbody>
-          {members.map((member) => (
-            <tr key={member.id} className="border-b">
-              <td className="py-2">{member.email}</td>
-              <td className="py-2">{member.role}</td>
+      <div className={tableWrapperClass}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className={theadRowClass}>
+              <th className={thClass}>Email</th>
+              <th className={thClass}>Role</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {members.map((member) => (
+              <tr key={member.id} className={tbodyRowClass}>
+                <td className={tdClass}>{member.email}</td>
+                <td className={tdClass}>
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                      ROLE_BADGE_CLASS[member.role] ?? "bg-parchment text-ink"
+                    }`}
+                  >
+                    {member.role.replace("_", " ")}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <div className="mt-8">
         <ParentStudentLinks

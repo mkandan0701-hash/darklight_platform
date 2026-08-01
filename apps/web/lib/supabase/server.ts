@@ -12,11 +12,23 @@ export function createSupabaseServerClient() {
         get(name: string) {
           return cookieStore.get(name)?.value;
         },
+        // Server Components can't write cookies — only Route Handlers and
+        // Server Actions can. Swallowing the throw is safe because
+        // middleware.ts refreshes the session cookie on every request, so a
+        // refresh dropped here is picked up on the next navigation.
         set(name: string, value: string, options: CookieOptions) {
-          cookieStore.set({ name, value, ...options });
+          try {
+            cookieStore.set({ name, value, ...options });
+          } catch {
+            /* called from a Server Component */
+          }
         },
         remove(name: string, options: CookieOptions) {
-          cookieStore.set({ name, value: "", ...options });
+          try {
+            cookieStore.set({ name, value: "", ...options });
+          } catch {
+            /* called from a Server Component */
+          }
         },
       },
     }

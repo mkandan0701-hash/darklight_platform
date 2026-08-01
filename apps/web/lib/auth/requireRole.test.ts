@@ -11,6 +11,7 @@ function sessionWithRole(role: CurrentSession["role"]): CurrentSession {
     role,
     email: "user@example.com",
     timezone: "America/New_York",
+    mustSetPassword: false,
   };
 }
 

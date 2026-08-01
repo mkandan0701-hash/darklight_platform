@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from "react";
 import { login } from "../../../lib/auth/actions";
+import { Field, fieldInputClass } from "../../../components/ui/Field";
+import { Button } from "../../../components/ui/Button";
 
 export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
@@ -20,22 +22,20 @@ export function LoginForm() {
 
   return (
     <form action={handleSubmit} className="flex flex-col gap-4">
-      <label className="flex flex-col gap-1 text-sm">
-        Email
-        <input name="email" type="email" required className="rounded border px-3 py-2" />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Password
-        <input name="password" type="password" required className="rounded border px-3 py-2" />
-      </label>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-      >
-        {pending ? "Signing in..." : "Sign in"}
-      </button>
+      <Field label="Email">
+        <input name="email" type="email" required className={fieldInputClass} />
+      </Field>
+      <Field label="Password">
+        <input name="password" type="password" required className={fieldInputClass} />
+      </Field>
+      {error && (
+        <p role="alert" className="rounded-lg bg-brick-light px-3 py-2 text-sm text-brick">
+          {error}
+        </p>
+      )}
+      <Button type="submit" disabled={pending} className="mt-1 w-full">
+        {pending ? "Signing in…" : "Sign in"}
+      </Button>
     </form>
   );
 }

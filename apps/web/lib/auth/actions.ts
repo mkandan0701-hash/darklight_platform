@@ -96,3 +96,47 @@ export async function logout() {
   await supabase.auth.signOut();
   redirect("/login");
 }
+
+const SetPasswordSchema = z
+  .object({
+    password: z.string().min(8, "Password must be at least 8 characters"),
+    confirmPassword: z.string().min(1, "Confirm your password"),
+  })
+  .refine((v) => v.password === v.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
+
+// Final step of the invite flow: an invited coach/student/parent arrives with
+// a session already established by /auth/callback but no password of their
+// own, so they can never sign in again until they set one here.
+export async function setPassword(formData: FormData): Promise<ActionResult> {
+  const parsed = SetPasswordSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  const supabase = createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return {
+      ok: false,
+      error: "Your link has expired. Ask your academy admin to send a new invite.",
+    };
+  }
+
+  // Clearing must_set_password in the same call as the password itself keeps
+  // the two from ever disagreeing — the dashboard gate opens exactly when a
+  // password actually exists.
+  const { error } = await supabase.auth.updateUser({
+    password: parsed.data.password,
+    data: { must_set_password: false },
+  });
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  redirect("/dashboard");
+}

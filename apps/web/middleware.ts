@@ -50,5 +50,8 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // `engine/` holds the vendored Stockfish wasm. Without it here, every fetch
+  // of a 7 MB static asset would run the Supabase getSession() refresh above
+  // and write session cookies onto a cacheable file.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|engine/).*)"],
 };

@@ -11,6 +11,11 @@ export type CurrentSession = {
   role: Role;
   email: string;
   timezone: string;
+  // Invited users hold a valid session before they have a password of their
+  // own. The dashboard layout uses this to send them to /set-password —
+  // without it they can browse the app, then be locked out for good once the
+  // session expires, with no password and no self-serve reset.
+  mustSetPassword: boolean;
 };
 
 // Memoized per-request: safe to call from a layout and every page/action
@@ -45,5 +50,10 @@ export const getCurrentSession = cache(async (): Promise<CurrentSession> => {
     role: dbUser.role as Role,
     email: dbUser.email,
     timezone: dbUser.timezone,
+    // Set on invite, cleared by setPassword(). getUser() re-reads this from
+    // the Auth server on every request, so it can't go stale. Absent for
+    // accounts created through signup (they chose a password up front) and
+    // for anyone invited before this flag existed.
+    mustSetPassword: user.user_metadata?.must_set_password === true,
   };
 });

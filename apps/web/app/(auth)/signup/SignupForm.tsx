@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { signUpAcademy } from "../../../lib/auth/actions";
+import { Field, fieldInputClass } from "../../../components/ui/Field";
+import { Button } from "../../../components/ui/Button";
 
 export function SignupForm() {
   const [error, setError] = useState<string | null>(null);
@@ -23,51 +25,41 @@ export function SignupForm() {
 
   return (
     <form action={handleSubmit} className="flex flex-col gap-4">
-      <label className="flex flex-col gap-1 text-sm">
-        Academy name
-        <input name="academyName" required className="rounded border px-3 py-2" />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Subdomain
+      <Field label="Academy name">
+        <input name="academyName" required className={fieldInputClass} />
+      </Field>
+      <Field label="Subdomain" help="Lowercase letters, numbers, and hyphens only.">
         <input
           name="subdomain"
           required
           placeholder="my-academy"
           pattern="[a-z0-9-]+"
-          className="rounded border px-3 py-2"
+          className={fieldInputClass}
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Timezone (IANA)
-        <input
-          name="timezone"
-          required
-          defaultValue="Asia/Kolkata"
-          className="rounded border px-3 py-2"
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Admin email
-        <input name="adminEmail" type="email" required className="rounded border px-3 py-2" />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Admin password
+      </Field>
+      <Field label="Timezone (IANA)" help="e.g. Asia/Kolkata, America/New_York">
+        <input name="timezone" required defaultValue="Asia/Kolkata" className={fieldInputClass} />
+      </Field>
+      <Field label="Admin email">
+        <input name="adminEmail" type="email" required className={fieldInputClass} />
+      </Field>
+      <Field label="Admin password" help="At least 8 characters.">
         <input
           name="adminPassword"
           type="password"
           required
           minLength={8}
-          className="rounded border px-3 py-2"
+          className={fieldInputClass}
         />
-      </label>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-      >
-        {pending ? "Creating academy..." : "Create academy"}
-      </button>
+      </Field>
+      {error && (
+        <p role="alert" className="rounded-lg bg-brick-light px-3 py-2 text-sm text-brick">
+          {error}
+        </p>
+      )}
+      <Button type="submit" disabled={pending} className="mt-1 w-full">
+        {pending ? "Creating academy…" : "Create academy"}
+      </Button>
     </form>
   );
 }

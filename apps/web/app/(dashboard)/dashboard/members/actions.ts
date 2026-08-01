@@ -1,11 +1,13 @@
 "use server";
 
 import { z } from "zod";
-import { RoleSchema } from "@chessplay-clone/shared";
+import { RoleSchema, tenantUrl } from "@chessplay-clone/shared";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { requireRole } from "../../../../lib/auth/requireRole";
 import { createSupabaseAdminClient } from "../../../../lib/supabase/admin";
+import { getTenantById } from "../../../../repositories/tenantRepository";
 import {
   createUserWithProfile,
   linkParentToStudent,
@@ -36,9 +38,37 @@ export async function inviteMember(formData: FormData): Promise<ActionResult> {
     return { ok: false, error: "Additional admins aren't supported yet" };
   }
 
+  const tenant = await getTenantById(session.tenantId);
+  if (!tenant) {
+    return { ok: false, error: "Could not resolve this academy" };
+  }
+
+  // The invite email must point at *this tenant's* host. Sending the invitee
+  // to the apex would leave the dashboard layout with no Tenant to resolve,
+  // and it would bounce them to /signup instead of signing them in.
+  const requestHeaders = headers();
+  const callbackUrl = tenantUrl({
+    host:
+      requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "",
+    rootDomain: process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "",
+    subdomain: tenant.subdomain,
+    path: "/auth/callback",
+    protocol: requestHeaders.get("x-forwarded-proto") ?? undefined,
+  });
+  if (!callbackUrl) {
+    return {
+      ok: false,
+      error:
+        "Invites need a tenant subdomain — they can't be sent from this host. Use your academy's own URL.",
+    };
+  }
+
   const supabaseAdmin = createSupabaseAdminClient();
   const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-    parsed.data.email
+    parsed.data.email,
+    // must_set_password lands in user_metadata and gates the dashboard until
+    // setPassword() clears it — see lib/auth/session.ts.
+    { redirectTo: callbackUrl, data: { must_set_password: true } }
   );
   if (error || !data.user) {
     return { ok: false, error: error?.message ?? "Could not send invite" };
