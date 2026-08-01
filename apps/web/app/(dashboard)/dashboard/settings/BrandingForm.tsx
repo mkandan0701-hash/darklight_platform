@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from "react";
 import { updateBrandingAction } from "./actions";
+import { Field, fieldInputClass } from "../../../../components/ui/Field";
+import { Button } from "../../../../components/ui/Button";
 
 export function BrandingForm({
   defaultLogoUrl,
@@ -28,34 +30,24 @@ export function BrandingForm({
   }
 
   return (
-    <form action={handleSubmit} className="flex max-w-sm flex-col gap-4">
-      <label className="flex flex-col gap-1 text-sm">
-        Logo URL
-        <input
-          name="logoUrl"
-          defaultValue={defaultLogoUrl}
-          className="rounded border px-3 py-2"
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Brand color
+    <form action={handleSubmit} className="flex flex-col gap-4">
+      <Field label="Logo URL" help="A direct link to an image file.">
+        <input name="logoUrl" defaultValue={defaultLogoUrl} className={fieldInputClass} />
+      </Field>
+      <Field label="Brand color">
         <input
           name="brandColor"
           type="text"
           defaultValue={defaultBrandColor}
-          placeholder="#1a1a1a"
-          className="rounded border px-3 py-2"
+          placeholder="#1F6D4C"
+          className={fieldInputClass}
         />
-      </label>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      {success && <p className="text-sm text-green-600">Saved.</p>}
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-      >
-        {pending ? "Saving..." : "Save branding"}
-      </button>
+      </Field>
+      {error && <p className="text-sm text-brick">{error}</p>}
+      {success && <p className="text-sm font-medium text-board-dark">Saved.</p>}
+      <Button type="submit" disabled={pending}>
+        {pending ? "Saving…" : "Save changes"}
+      </Button>
     </form>
   );
 }

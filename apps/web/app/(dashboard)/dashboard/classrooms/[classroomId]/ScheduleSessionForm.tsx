@@ -2,6 +2,8 @@
 
 import { useRef, useState, useTransition } from "react";
 import { scheduleSessionAction } from "../actions";
+import { Field, fieldInputClass } from "../../../../../components/ui/Field";
+import { Button } from "../../../../../components/ui/Button";
 
 export function ScheduleSessionForm({
   classroomId,
@@ -29,18 +31,16 @@ export function ScheduleSessionForm({
   return (
     <form ref={formRef} action={handleSubmit} className="flex flex-wrap items-end gap-3">
       <input type="hidden" name="classroomId" value={classroomId} />
-      <label className="flex flex-col gap-1 text-sm">
-        Date &amp; time (your timezone)
+      <Field label="Date & time (your timezone)">
         <input
           name="localDateTime"
           type="datetime-local"
           required
           defaultValue={defaultLocalDateTime}
-          className="rounded border px-3 py-2"
+          className={fieldInputClass}
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Duration (mins)
+      </Field>
+      <Field label="Duration (mins)" className="w-28">
         <input
           name="durationMins"
           type="number"
@@ -48,17 +48,13 @@ export function ScheduleSessionForm({
           max={240}
           defaultValue={60}
           required
-          className="w-24 rounded border px-3 py-2"
+          className={fieldInputClass}
         />
-      </label>
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-      >
-        {pending ? "Scheduling..." : "Schedule"}
-      </button>
-      {error && <p className="w-full text-sm text-red-600">{error}</p>}
+      </Field>
+      <Button type="submit" disabled={pending}>
+        {pending ? "Scheduling…" : "Schedule session"}
+      </Button>
+      {error && <p className="w-full text-sm text-brick">{error}</p>}
     </form>
   );
 }

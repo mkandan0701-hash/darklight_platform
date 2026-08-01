@@ -2,6 +2,9 @@ import Link from "next/link";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { listClassrooms } from "../../../../repositories/classroomRepository";
 import { ClassroomForm } from "./ClassroomForm";
+import { Card } from "../../../../components/ui/Card";
+import { EmptyState } from "../../../../components/ui/EmptyState";
+import { pageHeadingClass, textLinkClass } from "../../../../components/ui/styles";
 
 export default async function ClassroomsPage() {
   const session = await getCurrentSession();
@@ -9,30 +12,38 @@ export default async function ClassroomsPage() {
 
   return (
     <div>
-      <h1 className="text-lg font-semibold">Classrooms</h1>
+      <h1 className={pageHeadingClass}>Classrooms</h1>
       {session.role === "ACADEMY_ADMIN" && (
-        <div className="mt-4">
+        <Card className="mt-4">
           <ClassroomForm />
-        </div>
+        </Card>
       )}
-      <ul className="mt-6 space-y-2">
-        {classrooms.map((classroom) => (
-          <li key={classroom.id}>
-            <Link
-              href={`/dashboard/classrooms/${classroom.id}`}
-              className="text-blue-600 hover:underline"
-            >
-              {classroom.name}
-            </Link>
-            <span className="ml-2 text-xs text-gray-500">
-              {classroom.students.length} students · {classroom.coaches.length} coaches
-            </span>
-          </li>
-        ))}
-        {classrooms.length === 0 && (
-          <p className="text-sm text-gray-500">No classrooms yet.</p>
-        )}
-      </ul>
+
+      {classrooms.length === 0 ? (
+        <div className="mt-6">
+          <EmptyState
+            title="No classrooms yet"
+            description={
+              session.role === "ACADEMY_ADMIN"
+                ? "Create your first classroom above to start enrolling coaches and students."
+                : "Your academy admin hasn't created any classrooms yet."
+            }
+          />
+        </div>
+      ) : (
+        <ul className="mt-6 space-y-2">
+          {classrooms.map((classroom) => (
+            <Card key={classroom.id} className="flex items-center justify-between p-4">
+              <Link href={`/dashboard/classrooms/${classroom.id}`} className={textLinkClass}>
+                {classroom.name}
+              </Link>
+              <span className="text-xs text-slate">
+                {classroom.students.length} students · {classroom.coaches.length} coaches
+              </span>
+            </Card>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

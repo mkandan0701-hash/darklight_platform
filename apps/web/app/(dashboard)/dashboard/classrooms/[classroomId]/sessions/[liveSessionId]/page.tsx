@@ -3,6 +3,7 @@ import { getCurrentSession } from "../../../../../../../lib/auth/session";
 import { getLiveSession } from "../../../../../../../repositories/liveSessionRepository";
 import { formatInZone } from "../../../../../../../lib/time";
 import { LiveBoard } from "../../../../../../../components/LiveBoard";
+import { pageHeadingClass } from "../../../../../../../components/ui/styles";
 
 export default async function LiveSessionPage({
   params,
@@ -17,10 +18,10 @@ export default async function LiveSessionPage({
 
   return (
     <div>
-      <h1 className="text-lg font-semibold">
+      <h1 className={pageHeadingClass}>
         {formatInZone(liveSession.scheduledAtUtc, session.timezone)}
       </h1>
-      <p className="mt-1 text-sm text-gray-500">{liveSession.durationMins} minutes</p>
+      <p className="mt-1 font-mono text-sm text-slate">{liveSession.durationMins} minutes</p>
       <div className="mt-6">
         <LiveBoard liveSessionId={liveSession.id} role={session.role} />
       </div>

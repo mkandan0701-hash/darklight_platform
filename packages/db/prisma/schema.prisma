@@ -34,6 +34,7 @@ model Tenant {
   classrooms  Classroom[]
   tournaments Tournament[]
   invoices    Invoice[]
+  puzzles     Puzzle[]
 
   @@index([subdomain])
 }
@@ -245,7 +246,8 @@ model Assignment {
   dueAtUtc    DateTime?
   createdAt   DateTime  @default(now())
 
-  puzzles AssignmentPuzzle[]
+  puzzles        AssignmentPuzzle[]
+  puzzleAttempts PuzzleAttempt[]
 
   @@index([tenantId])
 }
@@ -255,15 +257,35 @@ model Assignment {
 // ---------------------------------------------------------------------------
 
 model Puzzle {
-  id        String   @id @default(cuid())
-  lichessId String   @unique
+  id        String       @id @default(cuid())
+  // LICHESS puzzles are global (tenantId null) — bulk-imported from the CC0
+  // export, shared across every academy. UPLOAD puzzles are a coach's own
+  // curated set, private to their tenant. Puzzle is intentionally exempt
+  // from the automatic tenant-scoping guard (see packages/db/src/index.ts)
+  // because of this global/private split — repositories are responsible for
+  // filtering correctly (see apps/web/repositories/puzzleRepository.ts).
+  tenantId  String?
+  tenant    Tenant?      @relation(fields: [tenantId], references: [id])
+  source    PuzzleSource @default(LICHESS)
+  lichessId String?      @unique
   fen       String
   moves     String
-  rating    Int
+  rating    Int?
   themes    String[]
+  // Set only for source = UPLOAD. Plain scalar (no relation) — provenance
+  // only, doesn't need to support querying puzzles from the User side.
+  uploadedByUserId String?
+  createdAt DateTime     @default(now())
 
   assignments AssignmentPuzzle[]
   attempts    PuzzleAttempt[]
+
+  @@index([tenantId])
+}
+
+enum PuzzleSource {
+  LICHESS
+  UPLOAD
 }
 
 model AssignmentPuzzle {
@@ -283,8 +305,10 @@ model PuzzleAttempt {
   tenantId       String
   studentId      String
   puzzleId       String
+  assignmentId   String
   student        StudentProfile @relation(fields: [studentId], references: [id])
   puzzle         Puzzle         @relation(fields: [puzzleId], references: [id])
+  assignment     Assignment     @relation(fields: [assignmentId], references: [id])
   attemptMoves   Json
   isCorrect      Boolean
   timeTakenSecs  Int
@@ -292,6 +316,7 @@ model PuzzleAttempt {
 
   @@index([tenantId])
   @@index([studentId, puzzleId])
+  @@index([assignmentId, studentId])
 }
 
 model Game {
@@ -481,4 +506,32 @@ enum CertificateType {
   ATTENDANCE
   RATING_MILESTONE
   TOURNAMENT_RESULT
+}
+
+// ---------------------------------------------------------------------------
+// Marketing
+// ---------------------------------------------------------------------------
+
+// Demo requests from the public marketing site (apps/web/app/book-demo).
+// Deliberately NOT tenant-scoped — and so intentionally absent from
+// TENANT_SCOPED_MODELS in packages/db/src/tenantScope.ts — because the person
+// booking is an anonymous prospect who has no Tenant yet. This is the same
+// class of exception as `Tenant` and `Puzzle`, not an oversight.
+model DemoBooking {
+  id           String    @id @default(cuid())
+  name         String
+  email        String
+  academyName  String?
+  studentCount String?
+  notes        String?
+  // The chosen slot, stored in UTC per the timestamps-in-UTC rule in claude.md.
+  slotAtUtc    DateTime
+  // The IANA zone the visitor picked the slot in, so follow-up can quote the
+  // time back to them in their own zone rather than the server's.
+  timezone     String
+  createdAt    DateTime  @default(now())
+  contactedAt  DateTime?
+
+  @@index([slotAtUtc])
+  @@index([email])
 }

@@ -5,6 +5,7 @@ import { requireRole } from "../../lib/auth/requireRole";
 import { getTenantBySubdomain } from "../../repositories/tenantRepository";
 import { UnauthorizedError, TenantMismatchError } from "../../lib/auth/errors";
 import { logout } from "../../lib/auth/actions";
+import { DashboardNav } from "../../components/dashboard/DashboardNav";
 
 export default async function DashboardLayout({
   children,
@@ -33,6 +34,13 @@ export default async function DashboardLayout({
     );
   }
 
+  // An invitee who wanders off /set-password still has a working session, so
+  // nothing would otherwise stop them — until it expires and they're locked
+  // out with no password to sign back in with.
+  if (session.mustSetPassword) {
+    redirect("/set-password");
+  }
+
   const isAdmin = (() => {
     try {
       requireRole(session, ["ACADEMY_ADMIN"]);
@@ -42,23 +50,36 @@ export default async function DashboardLayout({
     }
   })();
 
+  const canManagePuzzles = (() => {
+    try {
+      requireRole(session, ["ACADEMY_ADMIN", "COACH"]);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  const links = [
+    { href: "/dashboard", label: "Dashboard" },
+    { href: "/dashboard/classrooms", label: "Classrooms" },
+    { href: "/dashboard/homework", label: "Homework" },
+    { href: "/dashboard/play", label: "Play" },
+    { href: "/dashboard/analysis", label: "Analysis" },
+    ...(canManagePuzzles ? [{ href: "/dashboard/puzzles", label: "Puzzles" }] : []),
+    ...(isAdmin ? [{ href: "/dashboard/members", label: "Members" }] : []),
+    ...(isAdmin ? [{ href: "/dashboard/settings", label: "Settings" }] : []),
+  ];
+
   return (
-    <div className="min-h-screen">
-      <nav className="flex items-center justify-between border-b px-6 py-4">
-        <span className="font-semibold">{tenant.name}</span>
-        <div className="flex items-center gap-4 text-sm">
-          <a href="/dashboard">Dashboard</a>
-          <a href="/dashboard/classrooms">Classrooms</a>
-          {isAdmin && <a href="/dashboard/members">Members</a>}
-          {isAdmin && <a href="/dashboard/settings">Settings</a>}
-          <form action={logout}>
-            <button type="submit" className="text-gray-500 hover:text-black">
-              Log out
-            </button>
-          </form>
-        </div>
-      </nav>
-      <main className="p-8">{children}</main>
+    <div className="min-h-screen bg-parchment">
+      <DashboardNav
+        tenantName={tenant.name}
+        logoUrl={tenant.logoUrl}
+        brandColor={tenant.brandColor}
+        links={links}
+        logoutAction={logout}
+      />
+      <main className="mx-auto max-w-5xl px-6 py-8 md:px-8">{children}</main>
     </div>
   );
 }

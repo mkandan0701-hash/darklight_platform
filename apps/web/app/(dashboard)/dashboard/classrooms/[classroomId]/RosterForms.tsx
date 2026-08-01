@@ -2,6 +2,9 @@
 
 import { useState, useTransition } from "react";
 import { assignCoachAction, enrollStudentAction } from "../actions";
+import { Field, fieldInputClass } from "../../../../../components/ui/Field";
+import { Button } from "../../../../../components/ui/Button";
+import { Card } from "../../../../../components/ui/Card";
 
 export function RosterForms({ classroomId }: { classroomId: string }) {
   const [coachError, setCoachError] = useState<string | null>(null);
@@ -25,38 +28,28 @@ export function RosterForms({ classroomId }: { classroomId: string }) {
   }
 
   return (
-    <div className="mt-8 flex flex-col gap-6">
-      <form action={handleAssignCoach} className="flex items-end gap-3">
+    <Card className="mt-6 flex flex-col gap-6">
+      <form action={handleAssignCoach} className="flex flex-wrap items-end gap-3">
         <input type="hidden" name="classroomId" value={classroomId} />
-        <label className="flex flex-col gap-1 text-sm">
-          Assign coach (CoachProfile id)
-          <input name="profileId" required className="rounded border px-3 py-2" />
-        </label>
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-        >
+        <Field label="Assign coach" help="Paste the coach's profile ID." className="min-w-[16rem]">
+          <input name="profileId" required className={fieldInputClass} />
+        </Field>
+        <Button type="submit" variant="secondary" disabled={pending}>
           Assign
-        </button>
-        {coachError && <p className="text-sm text-red-600">{coachError}</p>}
+        </Button>
+        {coachError && <p className="w-full text-sm text-brick">{coachError}</p>}
       </form>
 
-      <form action={handleEnrollStudent} className="flex items-end gap-3">
+      <form action={handleEnrollStudent} className="flex flex-wrap items-end gap-3">
         <input type="hidden" name="classroomId" value={classroomId} />
-        <label className="flex flex-col gap-1 text-sm">
-          Enroll student (StudentProfile id)
-          <input name="profileId" required className="rounded border px-3 py-2" />
-        </label>
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-        >
+        <Field label="Enroll student" help="Paste the student's profile ID." className="min-w-[16rem]">
+          <input name="profileId" required className={fieldInputClass} />
+        </Field>
+        <Button type="submit" variant="secondary" disabled={pending}>
           Enroll
-        </button>
-        {studentError && <p className="text-sm text-red-600">{studentError}</p>}
+        </Button>
+        {studentError && <p className="w-full text-sm text-brick">{studentError}</p>}
       </form>
-    </div>
+    </Card>
   );
 }

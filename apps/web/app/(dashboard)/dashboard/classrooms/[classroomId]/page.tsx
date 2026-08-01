@@ -7,6 +7,13 @@ import { listUpcomingSessions } from "../../../../../repositories/liveSessionRep
 import { formatInZone, nextWeekendLocalDefault } from "../../../../../lib/time";
 import { RosterForms } from "./RosterForms";
 import { ScheduleSessionForm } from "./ScheduleSessionForm";
+import { Card } from "../../../../../components/ui/Card";
+import { EmptyState } from "../../../../../components/ui/EmptyState";
+import {
+  pageHeadingClass,
+  sectionHeadingClass,
+  textLinkClass,
+} from "../../../../../components/ui/styles";
 
 export default async function ClassroomDetailPage({
   params,
@@ -29,58 +36,72 @@ export default async function ClassroomDetailPage({
 
   return (
     <div>
-      <h1 className="text-lg font-semibold">{classroom.name}</h1>
+      <h1 className={pageHeadingClass}>{classroom.name}</h1>
 
-      <section className="mt-6">
-        <h2 className="font-medium">Coaches</h2>
-        <ul className="mt-2 text-sm">
-          {classroom.coaches.map((c) => (
-            <li key={c.id}>{c.coach.user.email}</li>
-          ))}
-          {classroom.coaches.length === 0 && (
-            <p className="text-gray-500">No coaches assigned yet.</p>
+      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <Card>
+          <h2 className={sectionHeadingClass}>Coaches</h2>
+          {classroom.coaches.length === 0 ? (
+            <p className="mt-2 text-sm text-slate">No coaches assigned yet.</p>
+          ) : (
+            <ul className="mt-2 space-y-1 text-sm text-ink">
+              {classroom.coaches.map((c) => (
+                <li key={c.id}>{c.coach.user.email}</li>
+              ))}
+            </ul>
           )}
-        </ul>
-      </section>
+        </Card>
 
-      <section className="mt-6">
-        <h2 className="font-medium">Students</h2>
-        <ul className="mt-2 text-sm">
-          {classroom.students.map((s) => (
-            <li key={s.id}>{s.student.user.email}</li>
-          ))}
-          {classroom.students.length === 0 && (
-            <p className="text-gray-500">No students enrolled yet.</p>
+        <Card>
+          <h2 className={sectionHeadingClass}>Students</h2>
+          {classroom.students.length === 0 ? (
+            <p className="mt-2 text-sm text-slate">No students enrolled yet.</p>
+          ) : (
+            <ul className="mt-2 space-y-1 text-sm text-ink">
+              {classroom.students.map((s) => (
+                <li key={s.id}>{s.student.user.email}</li>
+              ))}
+            </ul>
           )}
-        </ul>
-      </section>
+        </Card>
+      </div>
 
-      {session.role === "ACADEMY_ADMIN" && (
-        <RosterForms classroomId={classroom.id} />
-      )}
+      {session.role === "ACADEMY_ADMIN" && <RosterForms classroomId={classroom.id} />}
 
       <section className="mt-8">
-        <h2 className="font-medium">Upcoming sessions</h2>
-        <ul className="mt-2 space-y-1 text-sm">
-          {upcomingSessions.map((liveSession) => (
-            <li key={liveSession.id}>
-              <Link
-                href={`/dashboard/classrooms/${classroom.id}/sessions/${liveSession.id}`}
-                className="text-blue-600 hover:underline"
-              >
-                {formatInZone(liveSession.scheduledAtUtc, session.timezone)}
-              </Link>
-              <span className="ml-2 text-xs text-gray-500">
-                {liveSession.durationMins} min
-              </span>
-            </li>
-          ))}
-          {upcomingSessions.length === 0 && (
-            <p className="text-gray-500">No sessions scheduled yet.</p>
-          )}
-        </ul>
+        <h2 className={sectionHeadingClass}>Upcoming sessions</h2>
+
+        {upcomingSessions.length === 0 ? (
+          <div className="mt-3">
+            <EmptyState
+              title="No sessions scheduled yet"
+              description={
+                canSchedule
+                  ? "Schedule the first live session below — students and parents will see it in their own time zone."
+                  : "Check back once your coach schedules the next session."
+              }
+            />
+          </div>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {upcomingSessions.map((liveSession) => (
+              <Card key={liveSession.id} className="flex items-center justify-between p-4">
+                <Link
+                  href={`/dashboard/classrooms/${classroom.id}/sessions/${liveSession.id}`}
+                  className={textLinkClass}
+                >
+                  {formatInZone(liveSession.scheduledAtUtc, session.timezone)}
+                </Link>
+                <span className="font-mono text-xs text-slate">
+                  {liveSession.durationMins} min
+                </span>
+              </Card>
+            ))}
+          </ul>
+        )}
+
         {canSchedule && (
-          <div className="mt-4">
+          <Card className="mt-4">
             <ScheduleSessionForm
               classroomId={classroom.id}
               defaultLocalDateTime={
@@ -89,7 +110,7 @@ export default async function ClassroomDetailPage({
                   : ""
               }
             />
-          </div>
+          </Card>
         )}
       </section>
     </div>

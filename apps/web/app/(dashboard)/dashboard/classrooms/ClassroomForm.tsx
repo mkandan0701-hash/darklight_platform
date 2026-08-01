@@ -2,6 +2,8 @@
 
 import { useRef, useState, useTransition } from "react";
 import { createClassroomAction } from "./actions";
+import { Field, fieldInputClass } from "../../../../components/ui/Field";
+import { Button } from "../../../../components/ui/Button";
 
 export function ClassroomForm() {
   const [error, setError] = useState<string | null>(null);
@@ -21,19 +23,14 @@ export function ClassroomForm() {
   }
 
   return (
-    <form ref={formRef} action={handleSubmit} className="flex items-end gap-3">
-      <label className="flex flex-col gap-1 text-sm">
-        New classroom name
-        <input name="name" required className="rounded border px-3 py-2" />
-      </label>
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-      >
-        {pending ? "Creating..." : "Create"}
-      </button>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+    <form ref={formRef} action={handleSubmit} className="flex flex-wrap items-end gap-3">
+      <Field label="New classroom name">
+        <input name="name" required className={fieldInputClass} />
+      </Field>
+      <Button type="submit" disabled={pending}>
+        {pending ? "Creating…" : "Create classroom"}
+      </Button>
+      {error && <p className="w-full text-sm text-brick">{error}</p>}
     </form>
   );
 }
