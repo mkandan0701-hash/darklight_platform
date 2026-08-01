@@ -8,6 +8,7 @@ import { createSupabaseBrowserClient } from "../lib/supabase/client";
 import { useElementWidth } from "../lib/useElementWidth";
 import { tryMove } from "../lib/chess/tryMove";
 import { formatTimeInZone } from "../lib/time";
+import { useAudioMesh } from "../lib/audio/useAudioMesh";
 import { Button } from "./ui/Button";
 import { fieldInputClass } from "./ui/Field";
 import { sectionHeadingClass } from "./ui/styles";
@@ -53,6 +54,7 @@ export function LiveBoard({
   const isCoach = role === "COACH";
   const [sharedBoardRef, sharedBoardWidth] = useElementWidth<HTMLDivElement>(360);
   const [refBoardRef, refBoardWidth] = useElementWidth<HTMLDivElement>(360);
+  const audio = useAudioMesh({ socketRef, liveSessionId, socketConnected: connected });
 
   useEffect(() => {
     let cancelled = false;
@@ -220,6 +222,70 @@ export function LiveBoard({
 
   return (
     <div className="flex flex-wrap items-start gap-8">
+      <div className="flex w-full flex-wrap items-center gap-3 rounded-xl border border-ink/10 bg-white p-3 shadow-sm">
+        {audio.status === "idle" ? (
+          <Button type="button" onClick={audio.join} disabled={!connected}>
+            Join audio
+          </Button>
+        ) : (
+          <>
+            <Button variant="secondary" type="button" onClick={audio.leave}>
+              Leave audio
+            </Button>
+            <Button
+              variant={audio.micEnabled ? "secondary" : "destructive"}
+              type="button"
+              onClick={audio.toggleMic}
+              aria-pressed={!audio.micEnabled}
+            >
+              {audio.micEnabled ? "Mute" : "Unmute"}
+            </Button>
+          </>
+        )}
+
+        {audio.status === "connecting" && <span className="text-xs text-slate">Connecting…</span>}
+        {audio.status === "live" && audio.participants.length === 0 && (
+          <span className="text-xs text-slate">You&rsquo;re the only one on audio.</span>
+        )}
+        {audio.participants.length > 0 && (
+          <ul className="flex flex-wrap gap-2">
+            {audio.participants.map((participant) => (
+              <li
+                key={participant.peerId}
+                className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                  participant.connected
+                    ? "bg-board-light text-board"
+                    : "bg-slate-light text-slate"
+                }`}
+              >
+                {participant.name}
+                {!participant.connected && " (connecting…)"}
+              </li>
+            ))}
+          </ul>
+        )}
+        {audio.atCapacity && (
+          <span className="text-xs text-brick">
+            Audio is full. Everyone connects to everyone, so it&rsquo;s capped for call quality.
+          </span>
+        )}
+        {audio.error && <span className="text-xs text-brick">{audio.error}</span>}
+
+        {/* Remote audio is played, never rendered — the participant chips above
+            are the visible surface. */}
+        {audio.remoteAudio.map((entry) => (
+          <audio
+            key={entry.peerId}
+            autoPlay
+            ref={(element) => {
+              if (element && element.srcObject !== entry.stream) {
+                element.srcObject = entry.stream;
+              }
+            }}
+          />
+        ))}
+      </div>
+
       <div className="w-full max-w-[420px] sm:w-auto">
         <h2 className={`${sectionHeadingClass} mb-2 text-sm`}>Shared board</h2>
         <div

@@ -27,6 +27,28 @@ export async function listUpcomingSessions(tenantId: string, classroomId: string
   });
 }
 
+// The dashboard home needs "what's next" across every classroom a person
+// belongs to, not one at a time. Fanning out listUpcomingSessions per
+// classroom would be N queries and would lose the classroom name each row
+// needs as its label.
+export async function listUpcomingSessionsForClassrooms(
+  tenantId: string,
+  classroomIds: string[],
+  take: number
+) {
+  if (classroomIds.length === 0) return [];
+  return prisma.liveSession.findMany({
+    where: {
+      tenantId,
+      classroomId: { in: classroomIds },
+      scheduledAtUtc: { gte: new Date() },
+    },
+    include: { classroom: true },
+    orderBy: { scheduledAtUtc: "asc" },
+    take,
+  });
+}
+
 export async function getLiveSession(tenantId: string, liveSessionId: string) {
   return prisma.liveSession.findFirst({
     where: { id: liveSessionId, tenantId },

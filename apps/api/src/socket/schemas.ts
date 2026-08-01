@@ -46,6 +46,21 @@ export const chatMessageSchema = z.object({
   body: z.string().trim().min(1).max(1000),
 });
 
+export const audioJoinSchema = liveSessionPayload;
+export const audioLeaveSchema = liveSessionPayload;
+
+export const audioSignalSchema = z.object({
+  liveSessionId: idSchema,
+  // A Socket.io socket id. Whether it's actually a peer in the *same* session
+  // is an authorization question, checked in the handler — not here.
+  toPeerId: z.string().min(1).max(64),
+  // An SDP offer/answer or an ICE candidate. The server relays this opaquely
+  // and never parses it, so it's passthrough rather than a modelled shape —
+  // the WebRTC payload format is the browsers' business, not ours. Bounded
+  // only by the socket layer's own message size limit.
+  signal: z.record(z.unknown()),
+});
+
 export const refBoardLoadSchema = z.object({
   liveSessionId: idSchema,
   // Validity as a *chess position* is checked by chess.js in the handler; this

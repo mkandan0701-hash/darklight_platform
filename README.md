@@ -55,9 +55,10 @@ Tenant subdomains resolve automatically under `*.localhost` in dev (e.g. `academ
 
 ## Supabase Auth console setup
 
-Two settings in the Supabase dashboard have no code equivalent. Invites will
-*send* without them and then fail when the recipient clicks the link, so do
-both before testing the invite flow.
+Three settings in the Supabase dashboard have no code equivalent. Invites will
+*send* without the first two and then fail when the recipient clicks the link,
+so do those before testing the invite flow. The third breaks live sessions
+rather than invites — see below.
 
 **1. Allow tenant subdomains as redirect targets.**
 Authentication → URL Configuration → Redirect URLs. Every invite points at the
@@ -86,6 +87,27 @@ string. Replace the link with:
 `{{ .RedirectTo }}` is the per-tenant URL the invite was sent with, so one
 template serves every academy. Do the same for the *Reset password* template
 with `type=recovery`.
+
+**3. Register the custom access token hook.**
+Authentication → Hooks → *Custom Access Token* → enable and select
+`custom_access_token_hook` (schema `public`). The migration
+`20260730093333_custom_access_token_hook` creates the function; registering it
+is manual, and Supabase stores that registration outside your database.
+
+Without it, issued JWTs carry no `tenant_id`/`role` claims,
+`verifySupabaseJwt()` correctly denies everything, and **every Socket.io
+connection fails** — live sessions look broken for reasons unrelated to the
+code. Verify it (no dev server or password needed):
+
+```
+cd apps/web
+npm run verify:auth-hook           # or: npm run verify:auth-hook -- someone@academy.test
+```
+
+It checks the function exists, that only `supabase_auth_admin` may execute it
+(it is `SECURITY DEFINER` and resolves any user's tenant, so a broader grant
+would be an authorization bypass), then has Supabase issue a real token and
+reads the claims back off it — the only honest proof of registration.
 
 The invite flow then runs: admin invites from `/dashboard/members` →
 `app/auth/callback/route.ts` verifies the token and sets the session cookie →

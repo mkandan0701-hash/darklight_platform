@@ -51,24 +51,28 @@ const studentData: SocketSessionData = {
   displayName: "dev",
 };
 
-function createFakeSocket(data: SocketSessionData) {
+function createFakeSocket(data: SocketSessionData, id = "sock_self") {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const rooms = new Set<string>();
   const selfEmitted: Array<{ event: string; payload: unknown }> = [];
   return {
+    id,
     data: { ...data },
     rooms,
     on: (event: string, handler: (...args: unknown[]) => unknown) => {
       handlers.set(event, handler);
     },
     join: (room: string) => rooms.add(room),
+    leave: (room: string) => rooms.delete(room),
     emit: (event: string, payload: unknown) => selfEmitted.push({ event, payload }),
     handlers,
     selfEmitted,
   };
 }
 
-function createFakeIo() {
+// `roomMembers` backs the adapter lookup that audio-signal uses to check the
+// target peer is in the same call.
+function createFakeIo(roomMembers: Record<string, string[]> = {}) {
   const emitted: Array<{ room: string; event: string; payload: unknown }> = [];
   return {
     to: (room: string) => ({
@@ -76,13 +80,19 @@ function createFakeIo() {
         emitted.push({ room, event, payload });
       },
     }),
+    of: () => ({
+      adapter: {
+        sockets: async (rooms: Set<string>) =>
+          new Set(Array.from(rooms).flatMap((room) => roomMembers[room] ?? [])),
+      },
+    }),
     emitted,
   };
 }
 
-function setup(data: SocketSessionData) {
+function setup(data: SocketSessionData, roomMembers?: Record<string, string[]>) {
   const socket = createFakeSocket(data);
-  const io = createFakeIo();
+  const io = createFakeIo(roomMembers);
   const boardStore = createBoardStore(createFakeRedis() as never);
   registerLiveSessionHandlers(io as never, socket as never, { boardStore });
   return { socket, io, boardStore };
@@ -436,6 +446,169 @@ describe("chat-message", () => {
 
     expect(ack).toHaveBeenCalledWith(false, "not joined to this session's room");
     expect(io.emitted).toHaveLength(0);
+  });
+});
+
+describe("audio", () => {
+  const OFFER = { kind: "description", description: { type: "offer", sdp: "v=0" } };
+
+  it("refuses audio-join from a socket that isn't on the shared board", () => {
+    const { socket, io } = setup(studentData);
+
+    const ack = vi.fn();
+    socket.handlers.get("audio-join")!({ liveSessionId: "au1" }, ack);
+
+    expect(ack).toHaveBeenCalledWith(false, undefined, "not joined to this session's room");
+    expect(socket.rooms.has("session:au1:audio")).toBe(false);
+    expect(io.emitted).toHaveLength(0);
+  });
+
+  it("announces a joiner to the audio room and acks its peer id", () => {
+    const { socket, io } = setup(studentData);
+    socket.join("session:au2");
+
+    const ack = vi.fn();
+    socket.handlers.get("audio-join")!({ liveSessionId: "au2" }, ack);
+
+    expect(ack).toHaveBeenCalledWith(true, "sock_self");
+    expect(socket.rooms.has("session:au2:audio")).toBe(true);
+    expect(io.emitted[0]).toEqual({
+      room: "session:au2:audio",
+      event: "audio-peer-joined",
+      payload: { peerId: "sock_self", userId: "user_student_1", name: "dev" },
+    });
+  });
+
+  it("relays a signal to a peer in the same call, stamped with the sender", async () => {
+    const { socket, io } = setup(studentData, {
+      "session:au3:audio": ["sock_self", "sock_peer"],
+    });
+    socket.join("session:au3");
+    socket.handlers.get("audio-join")!({ liveSessionId: "au3" }, vi.fn());
+    io.emitted.length = 0;
+
+    const ack = vi.fn();
+    await socket.handlers.get("audio-signal")!(
+      { liveSessionId: "au3", toPeerId: "sock_peer", signal: OFFER },
+      ack
+    );
+
+    expect(ack).toHaveBeenCalledWith(true);
+    expect(io.emitted[0]).toEqual({
+      room: "sock_peer",
+      event: "audio-signal",
+      payload: { fromPeerId: "sock_self", signal: OFFER },
+    });
+  });
+
+  // Without the membership check, toPeerId is an arbitrary socket id and this
+  // handler becomes a way to push an SDP blob at any client on the server.
+  it("refuses to relay to a socket that isn't in this session's call", async () => {
+    const { socket, io } = setup(studentData, {
+      "session:au4:audio": ["sock_self"],
+      "session:other:audio": ["sock_stranger"],
+    });
+    socket.join("session:au4");
+    socket.handlers.get("audio-join")!({ liveSessionId: "au4" }, vi.fn());
+    io.emitted.length = 0;
+
+    const ack = vi.fn();
+    await socket.handlers.get("audio-signal")!(
+      { liveSessionId: "au4", toPeerId: "sock_stranger", signal: OFFER },
+      ack
+    );
+
+    expect(ack).toHaveBeenCalledWith(false, "peer is not in this session's audio");
+    expect(io.emitted).toHaveLength(0);
+  });
+
+  it("refuses to relay from a socket that never joined the call", async () => {
+    const { socket, io } = setup(studentData, {
+      "session:au5:audio": ["sock_peer"],
+    });
+    socket.join("session:au5");
+
+    const ack = vi.fn();
+    await socket.handlers.get("audio-signal")!(
+      { liveSessionId: "au5", toPeerId: "sock_peer", signal: OFFER },
+      ack
+    );
+
+    expect(ack).toHaveBeenCalledWith(false, "not joined to this session's audio");
+    expect(io.emitted).toHaveLength(0);
+  });
+
+  it("ignores a malformed signal payload", async () => {
+    const { socket, io } = setup(studentData);
+    socket.join("session:au6");
+    socket.handlers.get("audio-join")!({ liveSessionId: "au6" }, vi.fn());
+    io.emitted.length = 0;
+
+    const ack = vi.fn();
+    await socket.handlers.get("audio-signal")!(
+      { liveSessionId: "au6", toPeerId: "", signal: OFFER },
+      ack
+    );
+
+    expect(ack).toHaveBeenCalledWith(false, "invalid payload");
+    expect(io.emitted).toHaveLength(0);
+  });
+
+  it("announces a departure on audio-leave", () => {
+    const { socket, io } = setup(studentData);
+    socket.join("session:au7");
+    socket.handlers.get("audio-join")!({ liveSessionId: "au7" }, vi.fn());
+    io.emitted.length = 0;
+
+    socket.handlers.get("audio-leave")!({ liveSessionId: "au7" }, vi.fn());
+
+    expect(socket.rooms.has("session:au7:audio")).toBe(false);
+    expect(io.emitted[0]).toEqual({
+      room: "session:au7:audio",
+      event: "audio-peer-left",
+      payload: { peerId: "sock_self" },
+    });
+  });
+
+  // A closed tab must not leave a ghost in everyone else's participant list.
+  // This uses `disconnecting`, not `disconnect` — socket.rooms is already
+  // empty by the time the latter fires.
+  it("announces a departure for every call when the socket disconnects", () => {
+    const { socket, io } = setup(studentData);
+    socket.join("session:au8");
+    socket.join("session:au9");
+    socket.handlers.get("audio-join")!({ liveSessionId: "au8" }, vi.fn());
+    socket.handlers.get("audio-join")!({ liveSessionId: "au9" }, vi.fn());
+    io.emitted.length = 0;
+
+    socket.handlers.get("disconnecting")!();
+
+    const left = io.emitted.filter((e) => e.event === "audio-peer-left");
+    expect(left.map((e) => e.room).sort()).toEqual([
+      "session:au8:audio",
+      "session:au9:audio",
+    ]);
+  });
+
+  it("never emits an audio event into the shared or coach room", async () => {
+    const { socket, io } = setup(coachData, {
+      "session:au10:audio": ["sock_self", "sock_peer"],
+    });
+    socket.join("session:au10");
+    socket.join("session:au10:coach");
+
+    socket.handlers.get("audio-join")!({ liveSessionId: "au10" }, vi.fn());
+    await socket.handlers.get("audio-signal")!(
+      { liveSessionId: "au10", toPeerId: "sock_peer", signal: OFFER },
+      vi.fn()
+    );
+    socket.handlers.get("audio-leave")!({ liveSessionId: "au10" }, vi.fn());
+
+    const audioEvents = io.emitted.filter((e) => e.event.startsWith("audio-"));
+    expect(audioEvents.length).toBeGreaterThan(0);
+    expect(
+      audioEvents.every((e) => e.room === "session:au10:audio" || e.room === "sock_peer")
+    ).toBe(true);
   });
 });
 

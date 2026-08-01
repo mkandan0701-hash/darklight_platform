@@ -16,6 +16,9 @@ import { START_FEN, type BoardStore } from "./boardStore";
 import { safeLoadFen, safeMove } from "./chess";
 import type { SocketSessionData } from "./authenticate";
 import {
+  audioJoinSchema,
+  audioLeaveSchema,
+  audioSignalSchema,
   chatMessageSchema,
   clearArrowsSchema,
   drawArrowSchema,
@@ -37,6 +40,12 @@ export function sharedRoom(roomId: string) {
 }
 export function coachRoom(roomId: string) {
   return `session:${roomId}:coach`;
+}
+// Audio is a sub-room of the shared room: everyone in the lesson may speak,
+// but joining the board doesn't put you on a live mic. Never the coach room —
+// the reference board is prep material, not a side channel.
+export function audioRoom(roomId: string) {
+  return `session:${roomId}:audio`;
 }
 
 async function canAccessLiveSession(
@@ -272,6 +281,93 @@ export function registerLiveSessionHandlers(
       sentAtUtc: new Date().toISOString(),
     });
     ack?.(true);
+  });
+
+  // ---------------------------------------------------------------------
+  // Audio (WebRTC signalling). The server never sees or relays media — it
+  // only brokers the offer/answer/ICE exchange so two browsers can connect
+  // directly. Peer identity is the socket id.
+  // ---------------------------------------------------------------------
+
+  socket.on("audio-join", (raw: unknown, ack?: Ack) => {
+    const parsed = audioJoinSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, undefined, "invalid payload");
+      return;
+    }
+    const { liveSessionId } = parsed.data;
+    // Being on the shared board is the prerequisite, so audio inherits the
+    // classroom-membership check join-room already made.
+    if (!inRoom(sharedRoom(liveSessionId))) {
+      ack?.(false, undefined, "not joined to this session's room");
+      return;
+    }
+    const room = audioRoom(liveSessionId);
+    socket.join(room);
+
+    // Peers already in the call each receive this and open an offer toward
+    // the newcomer, who never offers back. That ordering is what keeps two
+    // peers from offering simultaneously — no glare, no polite-peer dance.
+    //
+    // The joiner sees its own event too (broadcast, not socket.to), so the
+    // client drops any peerId matching its own. It has to do that anyway to
+    // survive a reconnect racing its own prior session.
+    io.to(room).emit("audio-peer-joined", {
+      peerId: socket.id,
+      userId: appUser.id,
+      name: displayName,
+    });
+    ack?.(true, socket.id);
+  });
+
+  socket.on("audio-signal", async (raw: unknown, ack?: Ack) => {
+    const parsed = audioSignalSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, "invalid payload");
+      return;
+    }
+    const { liveSessionId, toPeerId, signal } = parsed.data;
+    const room = audioRoom(liveSessionId);
+    if (!inRoom(room)) {
+      ack?.(false, "not joined to this session's audio");
+      return;
+    }
+
+    // Without this the toPeerId is an arbitrary socket id and the handler
+    // becomes a way to push an SDP blob at any connected client on the
+    // server. Adapter-backed, so it sees peers on other instances too.
+    const members = await io.of("/").adapter.sockets(new Set([room]));
+    if (!members.has(toPeerId)) {
+      ack?.(false, "peer is not in this session's audio");
+      return;
+    }
+
+    // Relayed opaquely — the server has no opinion about SDP or ICE.
+    io.to(toPeerId).emit("audio-signal", { fromPeerId: socket.id, signal });
+    ack?.(true);
+  });
+
+  socket.on("audio-leave", (raw: unknown, ack?: Ack) => {
+    const parsed = audioLeaveSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, "invalid payload");
+      return;
+    }
+    const room = audioRoom(parsed.data.liveSessionId);
+    socket.leave(room);
+    io.to(room).emit("audio-peer-left", { peerId: socket.id });
+    ack?.(true);
+  });
+
+  // `disconnecting` rather than `disconnect`: socket.rooms is already empty by
+  // the time `disconnect` fires, so a closed tab would leave a ghost
+  // participant in everyone else's list forever.
+  socket.on("disconnecting", () => {
+    for (const room of socket.rooms) {
+      if (room.endsWith(":audio")) {
+        io.to(room).emit("audio-peer-left", { peerId: socket.id });
+      }
+    }
   });
 
   // ---------------------------------------------------------------------

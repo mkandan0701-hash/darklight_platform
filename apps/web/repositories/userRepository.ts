@@ -112,3 +112,17 @@ export async function getStudentProfileByUserId(tenantId: string, userId: string
 export async function getCoachProfileByUserId(tenantId: string, userId: string) {
   return prisma.coachProfile.findFirst({ where: { tenantId, userId } });
 }
+
+export async function getParentProfileByUserId(tenantId: string, userId: string) {
+  return prisma.parentProfile.findFirst({ where: { tenantId, userId } });
+}
+
+// A parent's own children only. Distinct from listParentStudentLinks, which
+// returns every link in the tenant and is safe solely because its one caller
+// is admin-gated — do not reuse that one for a parent-facing view.
+export async function listStudentsForParent(tenantId: string, parentProfileId: string) {
+  return prisma.parentStudent.findMany({
+    where: { tenantId, parentId: parentProfileId },
+    include: { student: { include: { user: true } } },
+  });
+}
