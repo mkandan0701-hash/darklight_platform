@@ -91,21 +91,26 @@ const ROLES = [
     email: "admin@demo-academy.test",
     label: "ACADEMY_ADMIN",
     markers: ["Welcome back", "Students", "Coaches", "Upcoming sessions"],
+    // Coaches and admins mark attendance; students and parents only read it.
+    attendance: { navLink: true, paths: ["/dashboard/attendance"] },
   },
   {
     email: "coach@demo-academy.test",
     label: "COACH",
     markers: ["Welcome back", "Your classrooms", "Upcoming sessions"],
+    attendance: { navLink: true, paths: ["/dashboard/attendance"] },
   },
   {
     email: "student@demo-academy.test",
     label: "STUDENT",
-    markers: ["Welcome back", "Your next sessions", "Homework"],
+    markers: ["Welcome back", "Your next sessions", "Homework", "Attendance"],
+    attendance: { navLink: false, paths: [] },
   },
   {
     email: "parent@demo-academy.test",
     label: "PARENT",
-    markers: ["Welcome back", "Your children"],
+    markers: ["Welcome back", "Your children", "attendance"],
+    attendance: { navLink: false, paths: [] },
   },
 ];
 
@@ -156,12 +161,34 @@ async function main() {
 
     renderedTimes.set(role.label, extractSessionTimes(dashboard.body));
 
+    // The nav link is the visible half of the role gate; the 404 below is the
+    // half that actually matters.
+    check(
+      dashboard.body.includes('href="/dashboard/attendance"') === role.attendance.navLink,
+      role.attendance.navLink
+        ? "attendance appears in the nav"
+        : "attendance is absent from the nav"
+    );
+
     for (const path of ALSO_VISIT) {
       const res = await get(path, cookies);
       check(res.status === 200, `GET ${path} is 200`, `got ${res.status}`);
       if (role.label === "PARENT" && path === "/dashboard/classrooms") {
         parentSawClassrooms = res.body.includes("Demo Classroom");
       }
+    }
+
+    for (const path of role.attendance.paths) {
+      const res = await get(path, cookies);
+      check(res.status === 200, `GET ${path} is 200`, `got ${res.status}`);
+      check(res.body.includes("Demo Classroom"), `${path} lists the classroom`);
+    }
+
+    // Hiding a nav link is not authorization — a student requesting the URL
+    // directly must be refused by the page itself.
+    if (!role.attendance.navLink) {
+      const res = await get("/dashboard/attendance", cookies);
+      check(res.status === 404, "direct /dashboard/attendance request is refused", `got ${res.status}`);
     }
   }
 

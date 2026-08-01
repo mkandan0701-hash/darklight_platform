@@ -31,6 +31,22 @@ export async function listUpcomingSessions(tenantId: string, classroomId: string
   });
 }
 
+// Attendance is marked for sessions that have already happened, and
+// listUpcomingSessions filters to `gte: now` — so nothing existing can list
+// the sessions a coach actually needs to mark. Newest first, since the class
+// you just taught is the one you want.
+export async function listSessionsForClassroom(
+  tenantId: string,
+  classroomId: string,
+  take: number
+) {
+  return prisma.liveSession.findMany({
+    where: { tenantId, classroomId },
+    orderBy: { scheduledAtUtc: "desc" },
+    take,
+  });
+}
+
 // The dashboard home needs "what's next" across every classroom a person
 // belongs to, not one at a time. Fanning out listUpcomingSessions per
 // classroom would be N queries and would lose the classroom name each row

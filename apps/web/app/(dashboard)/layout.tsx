@@ -59,10 +59,22 @@ export default async function DashboardLayout({
     }
   })();
 
+  // Separate from canManagePuzzles despite the same role set — they gate
+  // unrelated features and will drift apart.
+  const canMarkAttendance = (() => {
+    try {
+      requireRole(session, ["ACADEMY_ADMIN", "COACH"]);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
   const links = [
     { href: "/dashboard", label: "Dashboard" },
     { href: "/dashboard/classrooms", label: "Classrooms" },
     { href: "/dashboard/homework", label: "Homework" },
+    ...(canMarkAttendance ? [{ href: "/dashboard/attendance", label: "Attendance" }] : []),
     { href: "/dashboard/play", label: "Play" },
     { href: "/dashboard/analysis", label: "Analysis" },
     ...(canManagePuzzles ? [{ href: "/dashboard/puzzles", label: "Puzzles" }] : []),

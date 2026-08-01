@@ -12,6 +12,8 @@ import {
   getStudentPuzzleStatuses,
   listAssignmentsForStudent,
 } from "../../../repositories/assignmentRepository";
+import { getStudentAttendanceSummary } from "../../../repositories/attendanceRepository";
+import { formatAttendanceRate } from "../../../lib/attendance";
 import { Card } from "../../../components/ui/Card";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { RankProgressBar } from "../../../components/ui/RankProgressBar";
@@ -120,10 +122,28 @@ export default async function DashboardHomePage() {
       myClassroomIds,
       SESSION_PREVIEW_LIMIT
     );
+    const attendance = studentProfile
+      ? await getStudentAttendanceSummary(session.tenantId, studentProfile.id)
+      : { attendedCount: 0, sessionCount: 0 };
 
     return (
       <div>
         {heading}
+        <section className="mt-8">
+          <h2 className={sectionHeadingClass}>Attendance</h2>
+          <Card className="mt-3 flex flex-wrap items-center justify-between gap-3 p-4">
+            <RankProgressBar
+              completed={attendance.attendedCount}
+              total={attendance.sessionCount}
+              label={`${attendance.attendedCount} of ${attendance.sessionCount} sessions attended`}
+            />
+            <span className="text-sm text-ink">
+              {attendance.sessionCount === 0
+                ? "No sessions marked yet."
+                : `${formatAttendanceRate(attendance.attendedCount, attendance.sessionCount)} attended`}
+            </span>
+          </Card>
+        </section>
         <section className="mt-8">
           <h2 className={sectionHeadingClass}>Your next sessions</h2>
           <SessionList
@@ -191,10 +211,12 @@ export default async function DashboardHomePage() {
             return solved === assignment.puzzles.length && assignment.puzzles.length > 0;
           })
         );
+        const attendance = await getStudentAttendanceSummary(session.tenantId, link.studentId);
         return {
           name: link.student.user.email.split("@")[0] || link.student.user.email,
           assignmentCount: assignments.length,
           completedCount: done.filter(Boolean).length,
+          attendance,
         };
       })
     );
@@ -214,22 +236,40 @@ export default async function DashboardHomePage() {
           ) : (
             <ul className="mt-3 space-y-2">
               {children.map((child) => (
-                <Card key={child.name} className="flex items-center justify-between gap-4 p-4">
+                <Card
+                  key={child.name}
+                  className="flex flex-wrap items-center justify-between gap-3 p-4"
+                >
                   <span className="font-medium text-ink">{child.name}</span>
-                  <span className="text-xs text-slate">
-                    {child.assignmentCount === 0
-                      ? "no homework yet"
-                      : `${child.completedCount} of ${Math.min(
-                          child.assignmentCount,
-                          ASSIGNMENT_PREVIEW_LIMIT
-                        )} recent assignments complete`}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <RankProgressBar
+                      completed={child.attendance.attendedCount}
+                      total={child.attendance.sessionCount}
+                      label={`${child.name} attended ${child.attendance.attendedCount} of ${child.attendance.sessionCount} sessions`}
+                    />
+                    <span className="text-xs text-slate">
+                      {child.attendance.sessionCount === 0
+                        ? "no attendance marked yet"
+                        : `${formatAttendanceRate(
+                            child.attendance.attendedCount,
+                            child.attendance.sessionCount
+                          )} attendance`}
+                    </span>
+                    <span className="text-xs text-slate">
+                      {child.assignmentCount === 0
+                        ? "no homework yet"
+                        : `${child.completedCount} of ${Math.min(
+                            child.assignmentCount,
+                            ASSIGNMENT_PREVIEW_LIMIT
+                          )} recent assignments complete`}
+                    </span>
+                  </div>
                 </Card>
               ))}
             </ul>
           )}
           <p className="mt-3 text-xs text-slate">
-            Detailed progress, attendance and invoices arrive with the parent portal.
+            Detailed progress and invoices arrive with the parent portal.
           </p>
         </section>
       </div>

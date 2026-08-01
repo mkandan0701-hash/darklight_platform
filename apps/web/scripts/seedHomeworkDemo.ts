@@ -18,6 +18,7 @@ import { createUserWithProfile, linkParentToStudent } from "../repositories/user
 import { createClassroom, assignCoach, enrollStudent } from "../repositories/classroomRepository";
 import { createAssignment } from "../repositories/assignmentRepository";
 import { createLiveSession } from "../repositories/liveSessionRepository";
+import { markAttendance } from "../repositories/attendanceRepository";
 
 const SUBDOMAIN = "demo-academy";
 const PASSWORD = "DemoPass123!";
@@ -190,6 +191,26 @@ async function main() {
       durationMins: 60,
     });
   }
+
+  // A session that has already happened, with attendance marked, so the
+  // report has real numbers rather than only an empty state. Dated before the
+  // student's enrolment would make them correctly invisible in the denominator,
+  // so keep it after.
+  let pastSession = await prisma.liveSession.findFirst({
+    where: { tenantId: tenant.id, classroomId: classroom.id, scheduledAtUtc: { lt: new Date() } },
+    orderBy: { scheduledAtUtc: "desc" },
+  });
+  if (!pastSession) {
+    pastSession = await createLiveSession({
+      tenantId: tenant.id,
+      classroomId: classroom.id,
+      scheduledAtUtc: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      durationMins: 60,
+    });
+  }
+  await markAttendance(tenant.id, pastSession.id, [
+    { studentId: studentProfile.id, present: true, mode: "ONLINE" },
+  ]);
 
   const base = `http://${SUBDOMAIN}.localhost:3000`;
   console.log("\nDemo data ready.\n");
