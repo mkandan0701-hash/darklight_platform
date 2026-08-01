@@ -47,11 +47,31 @@ npm workspaces monorepo:
 ## Running locally
 
 ```
-npm run dev:web   # Next.js dev server, http://localhost:3000 (WEB_PORT)
+npm run dev:web   # Next.js dev server, http://localhost:3000 (PORT)
 npm run dev:api   # Express + Socket.io server, http://localhost:4000 (API_PORT)
 ```
 
+`npm run dev:api` needs `REDIS_URL` to point at a running Redis. Live sessions
+hold their authoritative board position there, so without it `join-room` hangs
+and every session appears broken.
+
 Tenant subdomains resolve automatically under `*.localhost` in dev (e.g. `academy1.localhost:3000`) — no extra hosts-file setup needed.
+
+### Demo data and smoke tests
+
+Several paths can't be reached by Vitest — async server components hitting real
+Prisma rows, and Socket.io over a real connection. These scripts cover them:
+
+```
+npm run seed:demo         -w apps/web   # one account per role + classroom, session, homework
+npm run verify:auth-hook  -w apps/web   # the Supabase hook above is actually registered
+npm run verify:dashboards -w apps/web   # all four role dashboards render (dev server must be up)
+npm run verify:live       -w apps/api   # realtime: moves, arrows, chat, ref board, audio signalling
+```
+
+`seed:demo` puts the coach in `Asia/Kolkata`, the student in `America/New_York`
+and the parent in `Europe/London`, so anything rendering a time in the wrong
+zone is visible immediately. All demo passwords are `DemoPass123!`.
 
 ## Supabase Auth console setup
 

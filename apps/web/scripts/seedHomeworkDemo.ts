@@ -1,23 +1,30 @@
-// One-off dev script: creates a demo Tenant + ACADEMY_ADMIN/COACH/STUDENT
-// accounts, a Classroom enrolling the coach+student, two puzzles, and a
-// homework Assignment linking them — so the homework/attempt-logging feature
-// can be clicked through in a browser without hand-building fixtures via the
-// signup UI. Safe to re-run: looks up existing rows/auth users by their fixed
-// demo identifiers instead of erroring on duplicates.
+// One-off dev script: creates a demo Tenant with one account per role
+// (ACADEMY_ADMIN/COACH/STUDENT/PARENT), a Classroom enrolling the
+// coach+student, a parent->student link, an upcoming LiveSession, two puzzles,
+// and a homework Assignment — enough to click through every dashboard and the
+// live session without hand-building fixtures via the signup UI. Safe to
+// re-run: looks up existing rows/auth users by their fixed demo identifiers
+// instead of erroring on duplicates.
+//
+// The coach and student sit in deliberately different time zones (IST vs EST)
+// so anything that renders a time in the wrong zone is visible immediately.
 //
 // Run from apps/web: npx tsx --env-file=.env.local scripts/seedHomeworkDemo.ts
 
 import { prisma, prismaBase } from "@chessplay-clone/db";
+import type { Role } from "@chessplay-clone/shared";
 import { createSupabaseAdminClient } from "../lib/supabase/admin";
-import { createUserWithProfile } from "../repositories/userRepository";
+import { createUserWithProfile, linkParentToStudent } from "../repositories/userRepository";
 import { createClassroom, assignCoach, enrollStudent } from "../repositories/classroomRepository";
 import { createAssignment } from "../repositories/assignmentRepository";
+import { createLiveSession } from "../repositories/liveSessionRepository";
 
 const SUBDOMAIN = "demo-academy";
 const PASSWORD = "DemoPass123!";
 const ADMIN_EMAIL = "admin@demo-academy.test";
 const COACH_EMAIL = "coach@demo-academy.test";
 const STUDENT_EMAIL = "student@demo-academy.test";
+const PARENT_EMAIL = "parent@demo-academy.test";
 
 async function getOrCreateAuthUser(email: string, password: string) {
   const supabaseAdmin = createSupabaseAdminClient();
@@ -38,7 +45,7 @@ async function getOrCreateAuthUser(email: string, password: string) {
 async function getOrCreateUser(input: {
   tenantId: string;
   email: string;
-  role: "ACADEMY_ADMIN" | "COACH" | "STUDENT";
+  role: Role;
   timezone: string;
   authProviderId: string;
 }) {
@@ -63,6 +70,7 @@ async function main() {
   const adminAuth = await getOrCreateAuthUser(ADMIN_EMAIL, PASSWORD);
   const coachAuth = await getOrCreateAuthUser(COACH_EMAIL, PASSWORD);
   const studentAuth = await getOrCreateAuthUser(STUDENT_EMAIL, PASSWORD);
+  const parentAuth = await getOrCreateAuthUser(PARENT_EMAIL, PASSWORD);
 
   await getOrCreateUser({
     tenantId: tenant.id,
@@ -85,12 +93,32 @@ async function main() {
     timezone: "America/New_York",
     authProviderId: studentAuth.id,
   });
+  await getOrCreateUser({
+    tenantId: tenant.id,
+    email: PARENT_EMAIL,
+    role: "PARENT",
+    // A third zone, so the parent dashboard's times are visibly not just a
+    // copy of the coach's or the student's.
+    timezone: "Europe/London",
+    authProviderId: parentAuth.id,
+  });
 
   const coachProfile = await prisma.coachProfile.findFirstOrThrow({
     where: { tenantId: tenant.id, user: { authProviderId: coachAuth.id } },
   });
   const studentProfile = await prisma.studentProfile.findFirstOrThrow({
     where: { tenantId: tenant.id, user: { authProviderId: studentAuth.id } },
+  });
+  const parentProfile = await prisma.parentProfile.findFirstOrThrow({
+    where: { tenantId: tenant.id, user: { authProviderId: parentAuth.id } },
+  });
+
+  // linkParentToStudent returns any existing link rather than creating a
+  // second one, so this is safe on a re-run.
+  await linkParentToStudent({
+    tenantId: tenant.id,
+    parentProfileId: parentProfile.id,
+    studentProfileId: studentProfile.id,
   });
 
   let classroom = await prisma.classroom.findFirst({
@@ -146,13 +174,36 @@ async function main() {
     });
   }
 
+  // An upcoming session so the dashboard home has something in "upcoming
+  // sessions" and there's a room to open. Kept in the future on every run —
+  // listUpcomingSessions filters on scheduledAtUtc >= now, so a fixed date
+  // would silently vanish from the dashboard once it passed.
+  let liveSession = await prisma.liveSession.findFirst({
+    where: { tenantId: tenant.id, classroomId: classroom.id, scheduledAtUtc: { gte: new Date() } },
+    orderBy: { scheduledAtUtc: "asc" },
+  });
+  if (!liveSession) {
+    liveSession = await createLiveSession({
+      tenantId: tenant.id,
+      classroomId: classroom.id,
+      scheduledAtUtc: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      durationMins: 60,
+    });
+  }
+
+  const base = `http://${SUBDOMAIN}.localhost:3000`;
   console.log("\nDemo data ready.\n");
-  console.log(`Dashboard URL:  http://${SUBDOMAIN}.localhost:3000/dashboard`);
-  console.log(`Homework URL:   http://${SUBDOMAIN}.localhost:3000/dashboard/homework`);
-  console.log(`Login page:     http://${SUBDOMAIN}.localhost:3000/login\n`);
-  console.log(`Admin login:    ${ADMIN_EMAIL} / ${PASSWORD}`);
-  console.log(`Coach login:    ${COACH_EMAIL} / ${PASSWORD}`);
-  console.log(`Student login:  ${STUDENT_EMAIL} / ${PASSWORD} (${studentUser.email})\n`);
+  console.log(`Login page:     ${base}/login`);
+  console.log(`Dashboard:      ${base}/dashboard`);
+  console.log(`Homework:       ${base}/dashboard/homework`);
+  console.log(
+    `Live session:   ${base}/dashboard/classrooms/${classroom.id}/sessions/${liveSession.id}\n`
+  );
+  console.log(`All passwords:  ${PASSWORD}\n`);
+  console.log(`Admin:    ${ADMIN_EMAIL}          (Asia/Kolkata)`);
+  console.log(`Coach:    ${COACH_EMAIL}          (Asia/Kolkata)`);
+  console.log(`Student:  ${studentUser.email}        (America/New_York)`);
+  console.log(`Parent:   ${PARENT_EMAIL}         (Europe/London, linked to the student)\n`);
 }
 
 main()

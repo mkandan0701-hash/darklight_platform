@@ -16,7 +16,8 @@ import { createSupabaseAdminClient } from "../lib/supabase/admin";
 import { createUserWithProfile } from "../repositories/userRepository";
 
 const SUBDOMAIN = process.argv[2] ?? "demo-academy";
-const PORT = Number(process.env.WEB_PORT ?? 3000);
+// Next reads PORT natively; WEB_PORT is kept for existing .env.local files.
+const PORT = Number(process.env.PORT ?? process.env.WEB_PORT ?? 3000);
 const TEST_EMAIL = "invite-smoke-test@demo-academy.test";
 const HOST = `${SUBDOMAIN}.localhost:${PORT}`;
 

@@ -14,7 +14,11 @@ export async function createLiveSession(input: {
       data: { ...input, socketRoomId: randomUUID() },
     });
     return tx.liveSession.update({
-      where: { id: created.id },
+      // tenantId is required here even though id alone is unique: tenantScope
+      // guards `update` on every tenant-scoped model, and a where without it
+      // is refused in both ambient and no-context modes. Without this the
+      // whole function threw, so scheduling a session never worked.
+      where: { id: created.id, tenantId: input.tenantId },
       data: { socketRoomId: created.id },
     });
   });

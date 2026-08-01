@@ -16,7 +16,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const SUBDOMAIN = process.argv[2] ?? "demo-academy";
-const PORT = Number(process.env.WEB_PORT ?? 3000);
+// Next reads PORT natively; WEB_PORT is kept for existing .env.local files.
+const PORT = Number(process.env.PORT ?? process.env.WEB_PORT ?? 3000);
 const HOST = `${SUBDOMAIN}.localhost:${PORT}`;
 
 const WASM_PATH = "/engine/stockfish-18-lite-single.wasm";

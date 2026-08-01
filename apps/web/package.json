@@ -3,12 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p ${WEB_PORT:-3000}",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "verify:auth-hook": "tsx --env-file=.env.local scripts/verifyAccessTokenHook.ts"
+    "verify:auth-hook": "tsx --env-file=.env.local scripts/verifyAccessTokenHook.ts",
+    "verify:dashboards": "tsx --env-file=.env.local scripts/verifyDashboards.ts",
+    "seed:demo": "tsx --env-file=.env.local scripts/seedHomeworkDemo.ts"
   },
   "dependencies": {
     "@chessplay-clone/db": "*",
