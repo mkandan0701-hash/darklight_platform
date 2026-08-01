@@ -1,5 +1,34 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { zonedLocalToUtc, formatInZone, nextWeekendLocalDefault } from "./time";
+import {
+  zonedLocalToUtc,
+  formatInZone,
+  formatTimeInZone,
+  nextWeekendLocalDefault,
+} from "./time";
+
+describe("formatTimeInZone", () => {
+  // The wedge case: one live-session chat message, two viewers, two clocks.
+  it("renders the same instant on each viewer's own clock", () => {
+    const sentAtUtc = "2026-01-15T14:30:00.000Z";
+    expect(formatTimeInZone(sentAtUtc, "Asia/Kolkata")).toBe("20:00");
+    expect(formatTimeInZone(sentAtUtc, "America/New_York")).toBe("09:30");
+    expect(formatTimeInZone(sentAtUtc, "Europe/London")).toBe("14:30");
+  });
+
+  it("honours daylight saving in the viewer's zone", () => {
+    // Same UTC clock time in July, but London is UTC+1 and New York UTC-4.
+    const sentAtUtc = "2026-07-15T14:30:00.000Z";
+    expect(formatTimeInZone(sentAtUtc, "Europe/London")).toBe("15:30");
+    expect(formatTimeInZone(sentAtUtc, "America/New_York")).toBe("10:30");
+  });
+
+  it("returns an empty string rather than throwing on bad input", () => {
+    // Rendered inside a chat list — a malformed timestamp must not blank the
+    // whole session page.
+    expect(formatTimeInZone("not-a-date", "Asia/Kolkata")).toBe("");
+    expect(formatTimeInZone("2026-01-15T14:30:00.000Z", "Not/AZone")).toBe("");
+  });
+});
 
 describe("zonedLocalToUtc", () => {
   it("interprets a datetime-local value in the given zone and converts to UTC", () => {

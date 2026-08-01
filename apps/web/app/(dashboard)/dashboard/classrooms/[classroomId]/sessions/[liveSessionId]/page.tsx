@@ -23,7 +23,11 @@ export default async function LiveSessionPage({
       </h1>
       <p className="mt-1 font-mono text-sm text-slate">{liveSession.durationMins} minutes</p>
       <div className="mt-6">
-        <LiveBoard liveSessionId={liveSession.id} role={session.role} />
+        <LiveBoard
+          liveSessionId={liveSession.id}
+          role={session.role}
+          timezone={session.timezone}
+        />
       </div>
     </div>
   );

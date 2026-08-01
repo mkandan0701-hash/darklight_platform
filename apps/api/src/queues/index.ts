@@ -1,10 +1,9 @@
 import { Queue } from "bullmq";
-import IORedis from "ioredis";
+import { createBullConnection } from "../redis";
 
-export const connection = new IORedis(
-  process.env.REDIS_URL ?? "redis://localhost:6379",
-  { maxRetriesPerRequest: null }
-);
+// BullMQ needs its own client (maxRetriesPerRequest: null for blocking reads).
+// See src/redis.ts for why the Socket.io adapter and board store can't share it.
+export const connection = createBullConnection();
 
 // One queue per class of async work, per CLAUDE.md §3 (async by default for
 // expensive work) and §11 (never block a request thread on Stockfish/external

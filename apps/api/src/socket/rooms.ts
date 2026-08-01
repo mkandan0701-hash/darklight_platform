@@ -1,158 +1,394 @@
-import { Chess } from "chess.js";
+import { randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
-import { prisma, runWithTenant } from "@chessplay-clone/db";
+import { runWithTenant } from "@chessplay-clone/db";
 import type { AuthedSession } from "@chessplay-clone/shared";
+import {
+  findCoachProfileId,
+  findLiveSessionClassroomId,
+  isClassroomCoach,
+  isClassroomStudent,
+} from "../repositories/liveSessionRepository";
+import {
+  findReferenceBoardFen,
+  upsertReferenceBoardFen,
+} from "../repositories/referenceBoardRepository";
+import { START_FEN, type BoardStore } from "./boardStore";
+import { safeLoadFen, safeMove } from "./chess";
+import type { SocketSessionData } from "./authenticate";
+import {
+  chatMessageSchema,
+  clearArrowsSchema,
+  drawArrowSchema,
+  flipBoardSchema,
+  joinRoomSchema,
+  moveSchema,
+  refBoardClearSchema,
+  refBoardLoadSchema,
+  refBoardMoveSchema,
+} from "./schemas";
 
-type AuthedSocket = Socket & { data: { session: AuthedSession } };
+type AuthedSocket = Socket & { data: SocketSessionData };
+type Ack = (ok: boolean, ...rest: unknown[]) => void;
 
-// In-memory authoritative board state per shared-session room. A dropped API
-// instance loses in-flight game state — acceptable for the Wave 2 scaffold,
-// but revisit once Socket.io moves behind the Redis adapter (see spec §3.4):
-// this map will need to move to Redis at the same time so state is shared
-// across instances, not just room broadcast.
-const boards = new Map<string, Chess>();
+export type LiveSessionDeps = { boardStore: BoardStore };
 
-function sharedRoom(roomId: string) {
+export function sharedRoom(roomId: string) {
   return `session:${roomId}`;
 }
-function coachRoom(roomId: string) {
+export function coachRoom(roomId: string) {
   return `session:${roomId}:coach`;
 }
 
 async function canAccessLiveSession(
   session: AuthedSession,
+  appUserId: string,
   liveSessionId: string,
   wantsCoachRoom: boolean
 ): Promise<boolean> {
-  const liveSession = await prisma.liveSession.findFirst({
-    where: { id: liveSessionId, tenantId: session.tenantId },
-    select: { classroomId: true },
-  });
-  if (!liveSession) return false;
+  const classroomId = await findLiveSessionClassroomId(
+    session.tenantId,
+    liveSessionId
+  );
+  if (!classroomId) return false;
 
   if (wantsCoachRoom) {
     if (session.role !== "COACH") return false;
-    const membership = await prisma.classroomCoach.findFirst({
-      where: {
-        tenantId: session.tenantId,
-        classroomId: liveSession.classroomId,
-        coach: { userId: session.userId },
-      },
-    });
-    return Boolean(membership);
+    return isClassroomCoach(session.tenantId, classroomId, appUserId);
   }
 
   if (session.role === "COACH") {
-    const membership = await prisma.classroomCoach.findFirst({
-      where: {
-        tenantId: session.tenantId,
-        classroomId: liveSession.classroomId,
-        coach: { userId: session.userId },
-      },
-    });
-    return Boolean(membership);
+    return isClassroomCoach(session.tenantId, classroomId, appUserId);
   }
-
-  const membership = await prisma.classroomStudent.findFirst({
-    where: {
-      tenantId: session.tenantId,
-      classroomId: liveSession.classroomId,
-      student: { userId: session.userId },
-    },
-  });
-  return Boolean(membership);
+  return isClassroomStudent(session.tenantId, classroomId, appUserId);
 }
 
-export function registerLiveSessionHandlers(io: Server, socket: AuthedSocket) {
-  socket.on(
-    "join-room",
-    async (
-      payload: { liveSessionId: string; room: "shared" | "coach" },
-      ack?: (ok: boolean, error?: string) => void
-    ) => {
-      // Only handler here that touches Prisma today (via canAccessLiveSession) —
-      // scope it to the socket's authenticated tenant so tenantScope's guard
-      // verifies rather than merely trusts the tenantId in that query.
-      await runWithTenant(socket.data.session.tenantId, async () => {
-        const wantsCoachRoom = payload.room === "coach";
-        const allowed = await canAccessLiveSession(
-          socket.data.session,
-          payload.liveSessionId,
-          wantsCoachRoom
-        );
-        if (!allowed) {
-          ack?.(false, "not authorized for this room");
-          return;
-        }
-        const targetRoom = wantsCoachRoom
-          ? coachRoom(payload.liveSessionId)
-          : sharedRoom(payload.liveSessionId);
-        socket.join(targetRoom);
-        ack?.(true);
-      });
+export function registerLiveSessionHandlers(
+  io: Server,
+  socket: AuthedSocket,
+  deps: LiveSessionDeps
+) {
+  const { boardStore } = deps;
+  const { session, appUser, displayName } = socket.data;
+
+  /** True only if this socket previously passed the join authorization check. */
+  function inRoom(room: string): boolean {
+    return socket.rooms.has(room);
+  }
+
+  async function coachProfileId(): Promise<string | null> {
+    if (socket.data.coachProfileId !== undefined) {
+      return socket.data.coachProfileId;
     }
-  );
+    const id = await runWithTenant(session.tenantId, () =>
+      findCoachProfileId(session.tenantId, appUser.id)
+    );
+    socket.data.coachProfileId = id;
+    return id;
+  }
 
-  // Shared room: every move is re-validated server-side before broadcast.
-  // Never trust or rebroadcast client-reported board state directly.
-  // Doesn't touch Prisma today (board state is in-memory, see `boards`
-  // above) — no runWithTenant wrap needed; add one if persistence is added.
-  socket.on(
-    "move",
-    (
-      payload: {
-        liveSessionId: string;
-        from: string;
-        to: string;
-        promotion?: string;
-      },
-      ack?: (ok: boolean, fen?: string, error?: string) => void
-    ) => {
-      const roomId = sharedRoom(payload.liveSessionId);
-      if (!socket.rooms.has(roomId)) {
-        ack?.(false, undefined, "not joined to this session's room");
-        return;
+  socket.on("join-room", async (raw: unknown, ack?: Ack) => {
+    const parsed = joinRoomSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, undefined, "invalid payload");
+      return;
+    }
+    const { liveSessionId, room } = parsed.data;
+    const wantsCoachRoom = room === "coach";
+
+    // Scope the membership queries to the socket's authenticated tenant so
+    // tenantScope verifies the tenantId filters rather than trusting them.
+    const allowed = await runWithTenant(session.tenantId, () =>
+      canAccessLiveSession(session, appUser.id, liveSessionId, wantsCoachRoom)
+    );
+    if (!allowed) {
+      ack?.(false, undefined, "not authorized for this room");
+      return;
+    }
+
+    if (wantsCoachRoom) {
+      socket.join(coachRoom(liveSessionId));
+      // Postgres is the durable record for the reference board — a coach can
+      // set a position up the night before — so it wins over Redis on join,
+      // and warms Redis for the rest of the lesson.
+      const stored = await runWithTenant(session.tenantId, () =>
+        findReferenceBoardFen(session.tenantId, liveSessionId)
+      );
+      if (stored) {
+        await boardStore.setFen(liveSessionId, stored, "ref");
       }
-
-      let game = boards.get(payload.liveSessionId);
-      if (!game) {
-        game = new Chess();
-        boards.set(payload.liveSessionId, game);
-      }
-
-      // chess.js v1 throws on an illegal move rather than returning null/undefined.
-      let move: ReturnType<Chess["move"]>;
-      try {
-        move = game.move({
-          from: payload.from,
-          to: payload.to,
-          promotion: payload.promotion,
-        });
-      } catch {
-        ack?.(false, undefined, "illegal move");
-        return;
-      }
-
-      const fen = game.fen();
-      io.to(roomId).emit("game-state", { fen, lastMove: move });
+      const fen = stored ?? (await boardStore.getFen(liveSessionId, "ref"));
+      // Hydrate this socket alone. Without it a coach reopening a session
+      // stares at a fresh board until they touch a piece.
+      socket.emit("ref-board-state", { fen });
       ack?.(true, fen);
+      return;
     }
-  );
 
-  // Coach-only room: reference board events never leave `:coach`.
-  socket.on(
-    "ref-board-move",
-    (
-      payload: { liveSessionId: string; from: string; to: string; promotion?: string },
-      ack?: (ok: boolean) => void
-    ) => {
-      const roomId = coachRoom(payload.liveSessionId);
-      if (!socket.rooms.has(roomId)) {
-        ack?.(false);
-        return;
-      }
-      io.to(roomId).emit("ref-board-move", payload);
-      ack?.(true);
+    socket.join(sharedRoom(liveSessionId));
+    const fen = await boardStore.getFen(liveSessionId);
+    socket.emit("game-state", { fen });
+    ack?.(true, fen);
+  });
+
+  // ---------------------------------------------------------------------
+  // Shared room. Identity on every broadcast is stamped from the socket's
+  // verified session — the payload schemas reject author fields outright, so
+  // a client cannot claim to be someone else.
+  // ---------------------------------------------------------------------
+
+  socket.on("move", async (raw: unknown, ack?: Ack) => {
+    const parsed = moveSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, undefined, "invalid payload");
+      return;
     }
-  );
+    const { liveSessionId, from, to, promotion } = parsed.data;
+    const room = sharedRoom(liveSessionId);
+    if (!inRoom(room)) {
+      ack?.(false, undefined, "not joined to this session's room");
+      return;
+    }
+
+    const currentFen = await boardStore.getFen(liveSessionId);
+    const game = safeLoadFen(currentFen);
+    if (!game) {
+      ack?.(false, undefined, "board state unreadable");
+      return;
+    }
+
+    // Re-validated server-side against the authoritative position before it
+    // reaches anyone else (CLAUDE.md §3.3). A rejected move is never broadcast.
+    const move = safeMove(game, { from, to, promotion });
+    if (!move) {
+      ack?.(false, currentFen, "illegal move");
+      return;
+    }
+
+    const nextFen = game.fen();
+    const won = await boardStore.compareAndSetFen(
+      liveSessionId,
+      currentFen,
+      nextFen
+    );
+    if (!won) {
+      // Someone else moved between our read and our write. Hand the client the
+      // real position instead of broadcasting a move built on a stale one.
+      const latest = await boardStore.getFen(liveSessionId);
+      ack?.(false, latest, "position changed, resync");
+      return;
+    }
+
+    io.to(room).emit("game-state", { fen: nextFen, lastMove: move });
+    ack?.(true, nextFen);
+  });
+
+  socket.on("draw-arrow", (raw: unknown, ack?: Ack) => {
+    const parsed = drawArrowSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, "invalid payload");
+      return;
+    }
+    const { liveSessionId, from, to } = parsed.data;
+    const room = sharedRoom(liveSessionId);
+    if (!inRoom(room)) {
+      ack?.(false, "not joined to this session's room");
+      return;
+    }
+    // Students may draw too — "show me what you'd play" is the point of the
+    // feature — but the UI colours by role, so who drew it has to be
+    // trustworthy. Hence stamped here, not read from the payload.
+    io.to(room).emit("draw-arrow", {
+      from,
+      to,
+      authorUserId: appUser.id,
+      authorRole: session.role,
+    });
+    ack?.(true);
+  });
+
+  socket.on("clear-arrows", (raw: unknown, ack?: Ack) => {
+    const parsed = clearArrowsSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, "invalid payload");
+      return;
+    }
+    const room = sharedRoom(parsed.data.liveSessionId);
+    if (!inRoom(room)) {
+      ack?.(false, "not joined to this session's room");
+      return;
+    }
+    // Wiping the board is a lesson-driving action: coach only, so a student
+    // can't erase the coach's annotation mid-explanation.
+    if (session.role !== "COACH") {
+      ack?.(false, "only a coach can clear arrows");
+      return;
+    }
+    io.to(room).emit("clear-arrows", {});
+    ack?.(true);
+  });
+
+  socket.on("flip-board", (raw: unknown, ack?: Ack) => {
+    const parsed = flipBoardSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, "invalid payload");
+      return;
+    }
+    const room = sharedRoom(parsed.data.liveSessionId);
+    if (!inRoom(room)) {
+      ack?.(false, "not joined to this session's room");
+      return;
+    }
+    // Coach only, because this moves *everyone's* board. A student who just
+    // wants to look from the other side flips locally in the UI and emits
+    // nothing.
+    if (session.role !== "COACH") {
+      ack?.(false, "only a coach can flip the shared board");
+      return;
+    }
+    io.to(room).emit("flip-board", {});
+    ack?.(true);
+  });
+
+  socket.on("chat-message", (raw: unknown, ack?: Ack) => {
+    const parsed = chatMessageSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, "invalid message");
+      return;
+    }
+    const { liveSessionId, body } = parsed.data;
+    const room = sharedRoom(liveSessionId);
+    if (!inRoom(room)) {
+      ack?.(false, "not joined to this session's room");
+      return;
+    }
+    io.to(room).emit("chat-message", {
+      id: randomUUID(),
+      body,
+      authorUserId: appUser.id,
+      authorRole: session.role,
+      authorName: displayName,
+      // UTC on the wire; each client renders it in its own viewer's zone
+      // (CLAUDE.md §3.5).
+      sentAtUtc: new Date().toISOString(),
+    });
+    ack?.(true);
+  });
+
+  // ---------------------------------------------------------------------
+  // Coach-only room. Nothing below may ever emit to sharedRoom() — the
+  // reference board is the coach's prep material (CLAUDE.md §3.4).
+  // ---------------------------------------------------------------------
+
+  async function persistRefBoard(
+    liveSessionId: string,
+    fen: string,
+    ack?: Ack
+  ): Promise<boolean> {
+    const coachId = await coachProfileId();
+    if (!coachId) {
+      ack?.(false, "no coach profile for this account");
+      return false;
+    }
+    await runWithTenant(session.tenantId, () =>
+      upsertReferenceBoardFen({
+        tenantId: session.tenantId,
+        liveSessionId,
+        coachId,
+        fen,
+      })
+    );
+    await boardStore.setFen(liveSessionId, fen, "ref");
+    return true;
+  }
+
+  socket.on("ref-board-load", async (raw: unknown, ack?: Ack) => {
+    const parsed = refBoardLoadSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, "invalid payload");
+      return;
+    }
+    const { liveSessionId, fen } = parsed.data;
+    const room = coachRoom(liveSessionId);
+    if (!inRoom(room)) {
+      ack?.(false, "not joined to this session's coach room");
+      return;
+    }
+    const game = safeLoadFen(fen);
+    if (!game) {
+      ack?.(false, "invalid FEN");
+      return;
+    }
+    // Store chess.js's normalized form so a hand-typed FEN with odd spacing
+    // doesn't break the compare-and-set on the next move.
+    const normalized = game.fen();
+    if (!(await persistRefBoard(liveSessionId, normalized, ack))) return;
+
+    io.to(room).emit("ref-board-state", { fen: normalized });
+    ack?.(true);
+  });
+
+  socket.on("ref-board-move", async (raw: unknown, ack?: Ack) => {
+    const parsed = refBoardMoveSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, "invalid payload");
+      return;
+    }
+    const { liveSessionId, from, to, promotion } = parsed.data;
+    const room = coachRoom(liveSessionId);
+    if (!inRoom(room)) {
+      ack?.(false, "not joined to this session's coach room");
+      return;
+    }
+
+    // Previously a blind relay. Now that the board is persisted there has to
+    // be one authoritative position, so moves are validated like any other.
+    // Arbitrary (non-reachable) setups go through ref-board-load instead.
+    const currentFen = await boardStore.getFen(liveSessionId, "ref");
+    const game = safeLoadFen(currentFen);
+    if (!game) {
+      ack?.(false, "board state unreadable");
+      return;
+    }
+    const move = safeMove(game, { from, to, promotion });
+    if (!move) {
+      ack?.(false, "illegal move");
+      return;
+    }
+
+    const nextFen = game.fen();
+    const won = await boardStore.compareAndSetFen(
+      liveSessionId,
+      currentFen,
+      nextFen,
+      "ref"
+    );
+    if (!won) {
+      const latest = await boardStore.getFen(liveSessionId, "ref");
+      io.to(room).emit("ref-board-state", { fen: latest });
+      ack?.(false, "position changed, resync");
+      return;
+    }
+    if (!(await persistRefBoard(liveSessionId, nextFen, ack))) return;
+
+    io.to(room).emit("ref-board-state", { fen: nextFen, lastMove: move });
+    ack?.(true);
+  });
+
+  socket.on("ref-board-clear", async (raw: unknown, ack?: Ack) => {
+    const parsed = refBoardClearSchema.safeParse(raw);
+    if (!parsed.success) {
+      ack?.(false, "invalid payload");
+      return;
+    }
+    const { liveSessionId } = parsed.data;
+    const room = coachRoom(liveSessionId);
+    if (!inRoom(room)) {
+      ack?.(false, "not joined to this session's coach room");
+      return;
+    }
+    if (!(await persistRefBoard(liveSessionId, START_FEN, ack))) return;
+
+    io.to(room).emit("ref-board-state", { fen: START_FEN });
+    ack?.(true);
+  });
 }

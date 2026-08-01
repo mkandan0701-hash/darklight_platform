@@ -19,6 +19,14 @@ export function formatInZone(date: Date, zone: string): string {
     .toFormat("ccc, dd LLL yyyy 'at' HH:mm ZZZZ");
 }
 
+// Clock time only, in the *viewer's* zone. For live-session chat, where the
+// date is implicit (it's happening now) but the zone is not — a coach in IST
+// and a student in EST must each read their own wall clock.
+export function formatTimeInZone(iso: string, zone: string): string {
+  const dt = DateTime.fromISO(iso, { zone: "utc" }).setZone(zone);
+  return dt.isValid ? dt.toFormat("HH:mm") : "";
+}
+
 // Default value for a `datetime-local` input: the next Saturday at 10:00 in
 // `zone`, supporting the weekend-first classroom scheduling default.
 export function nextWeekendLocalDefault(zone: string): string {
