@@ -101,3 +101,14 @@ export async function unlinkParentFromStudent(input: { tenantId: string; linkId:
     where: { tenantId: input.tenantId, id: input.linkId },
   });
 }
+
+// getCurrentSession().id is User.id, but StudentProfile-keyed models
+// (ClassroomStudent.studentId, PuzzleAttempt.studentId, ...) need the
+// StudentProfile's own id — this resolves one from the other.
+export async function getStudentProfileByUserId(tenantId: string, userId: string) {
+  return prisma.studentProfile.findFirst({ where: { tenantId, userId } });
+}
+
+export async function getCoachProfileByUserId(tenantId: string, userId: string) {
+  return prisma.coachProfile.findFirst({ where: { tenantId, userId } });
+}

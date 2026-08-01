@@ -53,6 +53,82 @@ npm run dev:api   # Express + Socket.io server, http://localhost:4000 (API_PORT)
 
 Tenant subdomains resolve automatically under `*.localhost` in dev (e.g. `academy1.localhost:3000`) — no extra hosts-file setup needed.
 
+## Supabase Auth console setup
+
+Two settings in the Supabase dashboard have no code equivalent. Invites will
+*send* without them and then fail when the recipient clicks the link, so do
+both before testing the invite flow.
+
+**1. Allow tenant subdomains as redirect targets.**
+Authentication → URL Configuration → Redirect URLs. Every invite points at the
+inviting academy's own host (`https://{subdomain}.{ROOT_DOMAIN}/auth/callback`),
+so the allow-list needs wildcards:
+
+```
+https://*.chessplayclone.com/auth/callback
+http://*.localhost:3000/auth/callback
+```
+
+Supabase's matcher treats `*` as a single path/host segment, so
+`*.chessplayclone.com` covers `academy1.` but not `a.b.` — which is what we
+want, since `resolveSubdomain` rejects multi-label prefixes anyway.
+
+**2. Point the invite email at the token-hash callback.**
+Authentication → Email Templates → *Invite user*. Supabase's default
+`{{ .ConfirmationURL }}` returns the session in the URL **fragment**, which a
+server can never read — the App Router callback would see an empty query
+string. Replace the link with:
+
+```html
+<a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=invite">Accept your invite</a>
+```
+
+`{{ .RedirectTo }}` is the per-tenant URL the invite was sent with, so one
+template serves every academy. Do the same for the *Reset password* template
+with `type=recovery`.
+
+The invite flow then runs: admin invites from `/dashboard/members` →
+`app/auth/callback/route.ts` verifies the token and sets the session cookie →
+`/set-password` → `/dashboard`. The invite carries a `must_set_password` flag
+in `user_metadata` that the dashboard layout enforces and `setPassword()`
+clears, so an invitee can't skip the middle step and end up with a session but
+no password. `app/auth/callback/route.ts` also accepts the
+PKCE `?code=` shape, so browser-initiated flows (OAuth, client-requested magic
+links) work through the same route without template changes.
+
+**Verifying it.** The chain spans a real Supabase token, cookie writes and
+redirects, so Vitest can't cover it. With the dev server running:
+
+```
+cd apps/web
+npx tsx --env-file=.env.local scripts/verifyInviteFlow.ts [subdomain]   # default: demo-academy
+```
+
+It mints a genuine invite token with `admin.generateLink` (so **no email is
+sent**), walks callback → set-password → dashboard, checks that invalid and
+replayed tokens are refused, and deletes the test user afterwards. Step 1
+above isn't needed for this script — it builds the callback URL itself rather
+than going through Supabase's redirect allow-list — so a green run confirms
+the code, not the console config.
+
+### BullMQ worker + puzzle DB import
+
+Background jobs run in a separate process from the API server so long-running work never blocks requests:
+
+```
+npm run worker --workspace=apps/api   # starts the BullMQ worker process (needs REDIS_URL)
+```
+
+With the worker running, one-off jobs can be enqueued via scripts. To bulk-load the global `Puzzle` table from Lichess's CC0 puzzle export (`lichess_db_puzzle.csv.zst`):
+
+```
+npm run import:puzzles --workspace=apps/api
+# or with options (defaults: rating 400–2400, no count cap):
+npm run import:puzzles --workspace=apps/api -- --ratingMin=600 --ratingMax=2000 --maxCount=50000
+```
+
+Safe to re-run — puzzles are upserted on Lichess's puzzle ID, so duplicates are skipped.
+
 ## Testing
 
 ```

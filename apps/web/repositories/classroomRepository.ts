@@ -39,6 +39,20 @@ export async function assignCoach(
   });
 }
 
+// createAssignmentAction needs this: unlike existing classroom-write actions
+// (all ACADEMY_ADMIN-only today), assigning homework is the first COACH-writable
+// action into a specific classroom, so ownership isn't implied by role alone.
+export async function isCoachAssignedToClassroom(
+  tenantId: string,
+  classroomId: string,
+  coachProfileId: string
+) {
+  const link = await prisma.classroomCoach.findFirst({
+    where: { tenantId, classroomId, coachId: coachProfileId },
+  });
+  return link !== null;
+}
+
 export async function enrollStudent(
   tenantId: string,
   classroomId: string,
