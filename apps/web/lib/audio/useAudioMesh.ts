@@ -15,6 +15,8 @@ import {
   shouldInitiateTo,
   type Participant,
 } from "./participants";
+import { stunOnlyIceServers, type IceServer } from "./iceServers";
+import { getIceServersAction } from "./actions";
 
 export type AudioStatus = "idle" | "connecting" | "live";
 
@@ -40,6 +42,9 @@ export function useAudioMesh({
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef(new Map<string, RTCPeerConnection>());
   const myPeerIdRef = useRef<string | null>(null);
+  // Fetched once per join. Every peer connection in a call shares the same
+  // credential, and it outlives the call by design (default one hour).
+  const iceServersRef = useRef<IceServer[]>([]);
   // Candidates can arrive before the offer that gives us a remote
   // description; addIceCandidate would throw, so they queue until then.
   const pendingCandidatesRef = useRef(new Map<string, RTCIceCandidateInit[]>());
@@ -72,6 +77,7 @@ export function useAudioMesh({
 
       const pc = createAudioPeerConnection({
         localStream,
+        iceServers: iceServersRef.current,
         onSignal: (signal) => emitSignal(peerId, signal),
         onTrack: (stream) => {
           setRemoteAudio((current) =>
@@ -116,6 +122,16 @@ export function useAudioMesh({
       setError(describeMediaError(err));
       setStatus("idle");
       return;
+    }
+
+    // TURN credentials expire, so they're fetched per call rather than at
+    // module load. If the server can't be reached, fall back to STUN — that
+    // is how the product behaved before TURN existed, and degraded audio
+    // beats refusing to connect at all.
+    try {
+      iceServersRef.current = await getIceServersAction(liveSessionId);
+    } catch {
+      iceServersRef.current = stunOnlyIceServers();
     }
 
     socket.emit(

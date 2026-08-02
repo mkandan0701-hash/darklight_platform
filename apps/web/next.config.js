@@ -3,6 +3,27 @@ const path = require("node:path");
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ["@chessplay-clone/db", "@chessplay-clone/shared"],
+  // Output file tracing walks the dependency graph to work out which files a
+  // serverless function actually needs. On Windows it globs the user profile
+  // (`C:\Users\<user>`), hits the deny-all junctions Windows keeps there
+  // (`Application Data`, `Cookies`), and glob's strict mode aborts the build:
+  //
+  //   glob error [Error: EPERM: operation not permitted, scandir
+  //   'C:\Users\Admin\Application Data']
+  //
+  // Confirmed by instrumenting fs.readdir: the caller is
+  // next/dist/compiled/@vercel/nft, not application code, and it reproduces on
+  // an unmodified checkout. outputFileTracingRoot below does not prevent it —
+  // nft reaches the home directory by another route.
+  //
+  // Tracing only exists to prune the deployment bundle, and Vercel builds on
+  // Linux where those junctions don't exist, so disabling it *only* on Windows
+  // makes local production builds work without changing what ships. Do not
+  // make this unconditional: on Vercel it is what keeps the bundle small.
+  //
+  // Note this is a top-level key. outputFileTracingRoot lives under
+  // `experimental` in Next 14; these two are deliberately not in the same place.
+  outputFileTracing: process.platform !== "win32",
   experimental: {
     // Pin the monorepo root explicitly — without this, Next's file tracing can
     // walk up past the repo root looking for lockfiles and hit permission-denied

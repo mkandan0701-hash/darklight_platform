@@ -1,4 +1,4 @@
-import { getIceServers } from "./iceServers";
+import type { IceServer } from "./iceServers";
 
 export type AudioSignal =
   | { kind: "description"; description: RTCSessionDescriptionInit }
@@ -9,11 +9,14 @@ export type AudioSignal =
 // and video is post-Wave-4.
 export function createAudioPeerConnection(params: {
   localStream: MediaStream;
+  // Passed in rather than read here: TURN credentials are minted server-side
+  // and arrive asynchronously, so this can no longer resolve them itself.
+  iceServers: IceServer[];
   onSignal: (signal: AudioSignal) => void;
   onTrack: (stream: MediaStream) => void;
   onConnectedChange: (connected: boolean) => void;
 }): RTCPeerConnection {
-  const pc = new RTCPeerConnection({ iceServers: getIceServers() });
+  const pc = new RTCPeerConnection({ iceServers: params.iceServers });
 
   for (const track of params.localStream.getAudioTracks()) {
     pc.addTrack(track, params.localStream);
