@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
-import { safeNextPath } from "../../../lib/auth/redirects";
+import { safeNextPath, safeRedirectHost } from "../../../lib/auth/redirects";
 
 // Landing point for every Supabase Auth email link (invite, password
 // recovery, email change). Two link shapes are accepted:
@@ -33,8 +33,22 @@ function redirectTo(request: NextRequest, pathname: string, search = "") {
   const url = request.nextUrl.clone();
   url.pathname = pathname;
   url.search = search;
+
   // Keeps the tenant subdomain the invitee arrived on — the dashboard layout
-  // resolves the Tenant from that host.
+  // resolves the Tenant from that host. nextUrl alone does NOT: it reports the
+  // server's own origin, so this used to redirect every invitee to the apex.
+  const host = safeRedirectHost(
+    request.headers.get("host"),
+    request.headers.get("x-forwarded-host"),
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? ""
+  );
+  if (host) {
+    url.host = host;
+    // Same chained-proxy shape tenantUrl() handles: take the outermost hop.
+    const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+    if (proto) url.protocol = proto;
+  }
+
   return NextResponse.redirect(url);
 }
 

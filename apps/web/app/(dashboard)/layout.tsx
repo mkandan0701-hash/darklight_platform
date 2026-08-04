@@ -21,17 +21,26 @@ export default async function DashboardLayout({
   let session;
   try {
     session = await getCurrentSession();
+    if (session.tenantId !== tenant.id) {
+      throw new TenantMismatchError(
+        "Signed-in user does not belong to this academy"
+      );
+    }
   } catch (err) {
+    // This layout is the route boundary, so it is where typed errors become
+    // responses (claude.md §7). The mismatch used to escape unhandled: sign-in
+    // succeeded, /dashboard answered 500 with an empty page, and nothing told
+    // the person their account lives on a different subdomain.
     if (err instanceof UnauthorizedError) {
       redirect("/login");
     }
+    if (err instanceof TenantMismatchError) {
+      // Their session cookie stays valid — it's genuinely their account, just
+      // the wrong academy — so /login explains it rather than looping. It
+      // renders the form without checking for a session, so there's no bounce.
+      redirect("/login?error=tenant_mismatch");
+    }
     throw err;
-  }
-
-  if (session.tenantId !== tenant.id) {
-    throw new TenantMismatchError(
-      "Signed-in user does not belong to this academy"
-    );
   }
 
   // An invitee who wanders off /set-password still has a working session, so
