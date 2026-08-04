@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCurrentSession } from "../../../../../lib/auth/session";
 import { requireRole } from "../../../../../lib/auth/requireRole";
-import { getClassroom } from "../../../../../repositories/classroomRepository";
+import { getClassroomForViewer } from "../../../../../repositories/classroomRepository";
 import { listUpcomingSessions } from "../../../../../repositories/liveSessionRepository";
 import { formatInZone, nextWeekendLocalDefault } from "../../../../../lib/time";
 import { RosterForms } from "./RosterForms";
@@ -21,7 +21,9 @@ export default async function ClassroomDetailPage({
   params: { classroomId: string };
 }) {
   const session = await getCurrentSession();
-  const classroom = await getClassroom(session.tenantId, params.classroomId);
+  // Membership-scoped: a classroom the viewer isn't in 404s rather than
+  // rendering its roster to anyone who guesses the id.
+  const classroom = await getClassroomForViewer(session, params.classroomId);
   if (!classroom) notFound();
 
   const canSchedule = (() => {
@@ -32,6 +34,9 @@ export default async function ClassroomDetailPage({
       return false;
     }
   })();
+  // Being in the room doesn't entitle you to everyone's contact details.
+  // Staff see the roster; a classmate or another family sees the headcount.
+  const canSeeRoster = canSchedule;
   const upcomingSessions = await listUpcomingSessions(session.tenantId, classroom.id);
 
   return (
@@ -56,12 +61,17 @@ export default async function ClassroomDetailPage({
           <h2 className={sectionHeadingClass}>Students</h2>
           {classroom.students.length === 0 ? (
             <p className="mt-2 text-sm text-slate">No students enrolled yet.</p>
-          ) : (
+          ) : canSeeRoster ? (
             <ul className="mt-2 space-y-1 text-sm text-ink">
               {classroom.students.map((s) => (
                 <li key={s.id}>{s.student.user.email}</li>
               ))}
             </ul>
+          ) : (
+            <p className="mt-2 text-sm text-ink">
+              {classroom.students.length}{" "}
+              {classroom.students.length === 1 ? "student" : "students"} enrolled.
+            </p>
           )}
         </Card>
       </div>

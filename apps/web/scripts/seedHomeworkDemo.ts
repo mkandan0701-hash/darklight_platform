@@ -26,6 +26,12 @@ const ADMIN_EMAIL = "admin@demo-academy.test";
 const COACH_EMAIL = "coach@demo-academy.test";
 const STUDENT_EMAIL = "student@demo-academy.test";
 const PARENT_EMAIL = "parent@demo-academy.test";
+// A second family in the same academy, enrolled in a classroom none of the
+// accounts above belong to. Nothing renders it in the happy path — it exists
+// so verifyDashboards can prove the classroom membership filter actually
+// withholds something, which a single-classroom fixture can never show.
+const OTHER_STUDENT_EMAIL = "other-student@demo-academy.test";
+const OTHER_CLASSROOM = "Advanced Squad";
 
 async function getOrCreateAuthUser(email: string, password: string) {
   const supabaseAdmin = createSupabaseAdminClient();
@@ -131,6 +137,28 @@ async function main() {
     await enrollStudent(tenant.id, classroom.id, studentProfile.id);
   }
 
+  // The negative fixture: a room in the same tenant with a different student
+  // and no coach the demo accounts share. The demo coach, student and parent
+  // must not see it or the email on its roster.
+  const otherStudentAuth = await getOrCreateAuthUser(OTHER_STUDENT_EMAIL, PASSWORD);
+  await getOrCreateUser({
+    tenantId: tenant.id,
+    email: OTHER_STUDENT_EMAIL,
+    role: "STUDENT",
+    timezone: "America/Los_Angeles",
+    authProviderId: otherStudentAuth.id,
+  });
+  const otherStudentProfile = await prisma.studentProfile.findFirstOrThrow({
+    where: { tenantId: tenant.id, user: { authProviderId: otherStudentAuth.id } },
+  });
+  let otherClassroom = await prisma.classroom.findFirst({
+    where: { tenantId: tenant.id, name: OTHER_CLASSROOM },
+  });
+  if (!otherClassroom) {
+    otherClassroom = await createClassroom(tenant.id, OTHER_CLASSROOM);
+    await enrollStudent(tenant.id, otherClassroom.id, otherStudentProfile.id);
+  }
+
   // Two known-legal puzzles: a real mate-in-a-few (already exercised by
   // lichessPuzzleImport.test.ts's normalization case) and a trivial one-move
   // "puzzle" from the starting position, so the attempt board can be tried
@@ -224,7 +252,10 @@ async function main() {
   console.log(`Admin:    ${ADMIN_EMAIL}          (Asia/Kolkata)`);
   console.log(`Coach:    ${COACH_EMAIL}          (Asia/Kolkata)`);
   console.log(`Student:  ${studentUser.email}        (America/New_York)`);
-  console.log(`Parent:   ${PARENT_EMAIL}         (Europe/London, linked to the student)\n`);
+  console.log(`Parent:   ${PARENT_EMAIL}         (Europe/London, linked to the student)`);
+  console.log(
+    `Other:    ${OTHER_STUDENT_EMAIL}   (America/Los_Angeles, in "${OTHER_CLASSROOM}" only)\n`
+  );
 }
 
 main()

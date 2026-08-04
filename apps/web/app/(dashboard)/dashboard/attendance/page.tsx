@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { requireRole } from "../../../../lib/auth/requireRole";
-import { listClassrooms } from "../../../../repositories/classroomRepository";
+import { listClassroomsForViewer } from "../../../../repositories/classroomRepository";
 import { Card } from "../../../../components/ui/Card";
 import { EmptyState } from "../../../../components/ui/EmptyState";
 import { pageHeadingClass, textLinkClass } from "../../../../components/ui/styles";
@@ -15,12 +15,10 @@ export default async function AttendancePage() {
     notFound();
   }
 
-  const classrooms = await listClassrooms(session.tenantId);
+  // An admin oversees the academy; a coach only sees rooms they teach. Both
+  // cases are the repository's membership filter now, not a filter here.
+  const myClassrooms = await listClassroomsForViewer(session);
   const isAdmin = session.role === "ACADEMY_ADMIN";
-  // An admin oversees the academy; a coach only sees rooms they teach.
-  const myClassrooms = isAdmin
-    ? classrooms
-    : classrooms.filter((c) => c.coaches.some((cc) => cc.coach.user.id === session.id));
 
   return (
     <div>

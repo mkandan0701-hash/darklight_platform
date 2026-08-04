@@ -57,7 +57,6 @@ function get(path: string, cookies: string[] = []): Promise<Response> {
 
 let failures = 0;
 const renderedTimes = new Map<string, string[]>();
-let parentSawClassrooms = false;
 
 function check(ok: boolean, label: string, detail = "") {
   if (ok) {
@@ -86,6 +85,11 @@ async function signIn(email: string): Promise<string[]> {
 // Markers are user-visible copy unique to each branch of the dashboard home.
 // Deliberately not test ids: if the copy changes, this should be re-read, not
 // silently keep passing against markup nobody looks at.
+// `classrooms.sees` / `.hidden` are the classroom-visibility contract. The
+// seed puts "Advanced Squad" in the same tenant with a different student and
+// none of these accounts on it, so anything but the admin seeing it is the
+// within-tenant leak this asserts against — no tenant boundary is crossed,
+// which is why only a check this explicit catches it.
 const ROLES = [
   {
     email: "admin@demo-academy.test",
@@ -93,26 +97,34 @@ const ROLES = [
     markers: ["Welcome back", "Students", "Coaches", "Upcoming sessions"],
     // Coaches and admins mark attendance; students and parents only read it.
     attendance: { navLink: true, paths: ["/dashboard/attendance"] },
+    classrooms: { sees: ["Demo Classroom", "Advanced Squad"], hidden: [], roster: true },
   },
   {
     email: "coach@demo-academy.test",
     label: "COACH",
     markers: ["Welcome back", "Your classrooms", "Upcoming sessions"],
     attendance: { navLink: true, paths: ["/dashboard/attendance"] },
+    classrooms: { sees: ["Demo Classroom"], hidden: ["Advanced Squad"], roster: true },
   },
   {
     email: "student@demo-academy.test",
     label: "STUDENT",
     markers: ["Welcome back", "Your next sessions", "Homework", "Attendance"],
     attendance: { navLink: false, paths: [] },
+    classrooms: { sees: ["Demo Classroom"], hidden: ["Advanced Squad"], roster: false },
   },
   {
     email: "parent@demo-academy.test",
     label: "PARENT",
     markers: ["Welcome back", "Your children", "attendance"],
     attendance: { navLink: false, paths: [] },
+    // Reaches "Demo Classroom" only through their enrolled child.
+    classrooms: { sees: ["Demo Classroom"], hidden: ["Advanced Squad"], roster: false },
   },
 ];
+
+// Belongs to the other family. Must not surface on any page these roles load.
+const OTHER_STUDENT_EMAIL = "other-student@demo-academy.test";
 
 const ALSO_VISIT = ["/dashboard/classrooms", "/dashboard/homework"];
 
@@ -128,6 +140,21 @@ async function main() {
   if (!health || health.status >= 500) {
     console.error(
       `Dev server not reachable on 127.0.0.1:${PORT}. Start it with \`npm run dev:web\` first.`
+    );
+    process.exit(1);
+  }
+
+  const tenant = await prismaBase.tenant.findUnique({ where: { subdomain: SUBDOMAIN } });
+  const rooms = tenant
+    ? await prismaBase.classroom.findMany({ where: { tenantId: tenant.id, deletedAt: null } })
+    : [];
+  const demoClassroomId = rooms.find((c) => c.name === "Demo Classroom")?.id;
+  const otherClassroomId = rooms.find((c) => c.name === "Advanced Squad")?.id;
+  if (!demoClassroomId || !otherClassroomId) {
+    console.error(
+      'Missing seeded classrooms ("Demo Classroom" and "Advanced Squad").\n' +
+        "Re-run scripts/seedHomeworkDemo.ts — the second room is the negative\n" +
+        "fixture the classroom-visibility checks measure against."
     );
     process.exit(1);
   }
@@ -173,10 +200,48 @@ async function main() {
     for (const path of ALSO_VISIT) {
       const res = await get(path, cookies);
       check(res.status === 200, `GET ${path} is 200`, `got ${res.status}`);
-      if (role.label === "PARENT" && path === "/dashboard/classrooms") {
-        parentSawClassrooms = res.body.includes("Demo Classroom");
-      }
+      check(
+        !res.body.includes(OTHER_STUDENT_EMAIL),
+        `${path} does not leak the other family's email`
+      );
     }
+
+    // --- Classroom visibility -------------------------------------------
+    const list = await get("/dashboard/classrooms", cookies);
+    for (const name of role.classrooms.sees) {
+      check(list.body.includes(name), `/dashboard/classrooms shows "${name}"`);
+    }
+    for (const name of role.classrooms.hidden) {
+      check(!list.body.includes(name), `/dashboard/classrooms withholds "${name}"`);
+    }
+
+    // Withholding a room from the list is not authorization — requesting its
+    // id directly has to be refused too, or the roster is one URL away.
+    const otherDetail = await get(`/dashboard/classrooms/${otherClassroomId}`, cookies);
+    const expected = role.label === "ACADEMY_ADMIN" ? 200 : 404;
+    check(
+      otherDetail.status === expected,
+      `direct GET of another classroom is ${expected === 404 ? "refused" : "allowed"}`,
+      `got ${otherDetail.status}`
+    );
+    // Asserted in both directions: "hidden from everyone" would also pass if
+    // the page were simply broken, so the admin has to positively see it.
+    check(
+      otherDetail.body.includes(OTHER_STUDENT_EMAIL) === (role.label === "ACADEMY_ADMIN"),
+      role.label === "ACADEMY_ADMIN"
+        ? "the admin does see that classroom's roster"
+        : "that classroom's roster email stays hidden"
+    );
+
+    // Being in the room doesn't entitle you to everyone's contact details.
+    const ownDetail = await get(`/dashboard/classrooms/${demoClassroomId}`, cookies);
+    check(ownDetail.status === 200, "own classroom detail is 200", `got ${ownDetail.status}`);
+    check(
+      ownDetail.body.includes("student@demo-academy.test") === role.classrooms.roster,
+      role.classrooms.roster
+        ? "staff see the student roster"
+        : "roster emails are replaced by a headcount"
+    );
 
     for (const path of role.attendance.paths) {
       const res = await get(path, cookies);
@@ -206,15 +271,6 @@ async function main() {
     check(
       coachTimes[0] !== studentTimes[0],
       "same session renders in each viewer's own zone"
-    );
-  }
-
-  if (parentSawClassrooms) {
-    console.warn(
-      "\nWARN  A PARENT can see 'Demo Classroom' on /dashboard/classrooms.\n" +
-        "      listClassrooms is not role-filtered, so parents and students see\n" +
-        "      every classroom in the academy and every roster email. Known gap,\n" +
-        "      tracked separately — not a tenant-isolation failure."
     );
   }
 

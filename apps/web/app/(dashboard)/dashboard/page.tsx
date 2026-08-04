@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getCurrentSession, type CurrentSession } from "../../../lib/auth/session";
 import { formatInZone } from "../../../lib/time";
-import { listClassrooms } from "../../../repositories/classroomRepository";
+import { listClassroomsForViewer } from "../../../repositories/classroomRepository";
 import { listUpcomingSessionsForClassrooms } from "../../../repositories/liveSessionRepository";
 import {
   getParentProfileByUserId,
@@ -113,13 +113,10 @@ export default async function DashboardHomePage() {
         )
       : [];
 
-    const classrooms = await listClassrooms(session.tenantId);
-    const myClassroomIds = classrooms
-      .filter((c) => c.students.some((s) => s.student.user.id === session.id))
-      .map((c) => c.id);
+    const myClassrooms = await listClassroomsForViewer(session);
     const sessions = await listUpcomingSessionsForClassrooms(
       session.tenantId,
-      myClassroomIds,
+      myClassrooms.map((c) => c.id),
       SESSION_PREVIEW_LIMIT
     );
     const attendance = studentProfile
@@ -277,13 +274,10 @@ export default async function DashboardHomePage() {
   }
 
   // ---- COACH and ACADEMY_ADMIN ------------------------------------------
-  const classrooms = await listClassrooms(session.tenantId);
+  // An admin oversees the academy; a coach sees only rooms they teach — both
+  // come out of the repository's membership filter.
+  const myClassrooms = await listClassroomsForViewer(session);
   const isAdmin = session.role === "ACADEMY_ADMIN";
-  // An admin oversees the academy; a coach sees only rooms they teach. Same
-  // filter idiom as homework/page.tsx.
-  const myClassrooms = isAdmin
-    ? classrooms
-    : classrooms.filter((c) => c.coaches.some((cc) => cc.coach.user.id === session.id));
 
   const sessions = await listUpcomingSessionsForClassrooms(
     session.tenantId,

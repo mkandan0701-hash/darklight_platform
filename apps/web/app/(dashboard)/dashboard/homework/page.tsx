@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { requireRole } from "../../../../lib/auth/requireRole";
 import { formatInZone } from "../../../../lib/time";
-import { listClassrooms } from "../../../../repositories/classroomRepository";
+import { listClassroomsForViewer } from "../../../../repositories/classroomRepository";
 import { listAssignablePuzzles } from "../../../../repositories/puzzleRepository";
 import { getStudentProfileByUserId } from "../../../../repositories/userRepository";
 import {
@@ -81,11 +81,9 @@ export default async function HomeworkPage({
     );
   }
 
-  const allClassrooms = await listClassrooms(session.tenantId);
-  const assignableClassrooms =
-    session.role === "ACADEMY_ADMIN"
-      ? allClassrooms
-      : allClassrooms.filter((c) => c.coaches.some((cc) => cc.coach.user.id === session.id));
+  // Admin gets every room, a coach only their own — the membership filter in
+  // listClassroomsForViewer already draws that line.
+  const assignableClassrooms = await listClassroomsForViewer(session);
 
   const ratingMin = searchParams.ratingMin ? Number(searchParams.ratingMin) : undefined;
   const ratingMax = searchParams.ratingMax ? Number(searchParams.ratingMax) : undefined;
