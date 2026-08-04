@@ -4,7 +4,7 @@ import { getCurrentSession } from "../../../../../lib/auth/session";
 import { requireRole } from "../../../../../lib/auth/requireRole";
 import { formatInZone } from "../../../../../lib/time";
 import { formatAttendanceRate } from "../../../../../lib/attendance";
-import { getClassroom } from "../../../../../repositories/classroomRepository";
+import { getClassroomForViewer } from "../../../../../repositories/classroomRepository";
 import { listSessionsForClassroom } from "../../../../../repositories/liveSessionRepository";
 import { getClassroomAttendanceReport } from "../../../../../repositories/attendanceRepository";
 import { getAttendanceForSession } from "../../../../../repositories/attendanceRepository";
@@ -36,7 +36,10 @@ export default async function ClassroomAttendancePage({
     notFound();
   }
 
-  const classroom = await getClassroom(session.tenantId, params.classroomId);
+  // The role gate above says "staff"; this says "staff *here*". Without it a
+  // coach could open any classroom's attendance report — every roster email
+  // and every session a colleague's class has sat — by changing the id.
+  const classroom = await getClassroomForViewer(session, params.classroomId);
   if (!classroom) notFound();
 
   const [report, sessions] = await Promise.all([

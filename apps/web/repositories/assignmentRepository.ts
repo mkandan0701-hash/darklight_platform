@@ -1,4 +1,13 @@
 import { prisma } from "@chessplay-clone/db";
+import {
+  visibleClassroomWhere,
+  type ClassroomViewer,
+} from "./classroomRepository";
+
+const ASSIGNMENT_INCLUDE = {
+  puzzles: { include: { puzzle: true } },
+  classroom: { include: { students: true } },
+};
 
 export async function createAssignment(
   tenantId: string,
@@ -32,13 +41,34 @@ export async function listAssignmentsForClassroom(tenantId: string, classroomId:
   });
 }
 
+// Tenant-scoped but NOT membership-scoped — same contract as getClassroom.
+// The two write paths that use it (submitPuzzleAttemptAction, and the puzzle
+// attempt page) do their own roster check against the returned classroom,
+// which is a stricter test than membership: it names the exact student.
 export async function getAssignment(tenantId: string, assignmentId: string) {
   return prisma.assignment.findFirst({
     where: { id: assignmentId, tenantId },
-    include: {
-      puzzles: { include: { puzzle: true } },
-      classroom: { include: { students: true } },
+    include: ASSIGNMENT_INCLUDE,
+  });
+}
+
+// Null for an assignment in a classroom the viewer isn't in.
+//
+// The student half of the detail page always verified enrolment; the
+// coach/admin half checked role only, so any coach could read any assignment
+// in the academy and, with it, every student's completion row — names and
+// solved counts for a class they don't teach.
+export async function getAssignmentForViewer(
+  viewer: ClassroomViewer,
+  assignmentId: string
+) {
+  return prisma.assignment.findFirst({
+    where: {
+      id: assignmentId,
+      tenantId: viewer.tenantId,
+      classroom: visibleClassroomWhere(viewer),
     },
+    include: ASSIGNMENT_INCLUDE,
   });
 }
 

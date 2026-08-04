@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@chessplay-clone/db";
+import {
+  visibleClassroomWhere,
+  type ClassroomViewer,
+} from "./classroomRepository";
 
 export async function createLiveSession(input: {
   tenantId: string;
@@ -69,8 +73,35 @@ export async function listUpcomingSessionsForClassrooms(
   });
 }
 
+// Tenant-scoped but NOT membership-scoped — same contract as getClassroom.
+// For callers that have already established the actor's right to this session
+// another way (attendance's role gate plus isCoachAssignedToClassroom, or the
+// audio action's own roster check). Anything reachable by a user-supplied id
+// should use getLiveSessionForViewer instead.
 export async function getLiveSession(tenantId: string, liveSessionId: string) {
   return prisma.liveSession.findFirst({
     where: { id: liveSessionId, tenantId },
+  });
+}
+
+// Null for a session in a classroom the viewer isn't in, so the page 404s
+// rather than rendering it.
+//
+// The socket layer already refuses the board itself — canAccessLiveSession
+// re-checks classroom membership on join-room, so an outsider loading this
+// page never got a working board. What they did get was the scheduled time
+// and duration of any session in the academy, and a page that looks like it
+// should work. Authorization belongs at both layers: the socket protects the
+// board, this protects the page.
+export async function getLiveSessionForViewer(
+  viewer: ClassroomViewer,
+  liveSessionId: string
+) {
+  return prisma.liveSession.findFirst({
+    where: {
+      id: liveSessionId,
+      tenantId: viewer.tenantId,
+      classroom: visibleClassroomWhere(viewer),
+    },
   });
 }

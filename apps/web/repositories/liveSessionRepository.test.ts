@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const liveSessionCreate = vi.fn();
 const liveSessionUpdate = vi.fn();
 const liveSessionFindMany = vi.fn();
+const liveSessionFindFirst = vi.fn();
 
 const tx = {
   liveSession: {
@@ -14,21 +15,28 @@ const tx = {
 vi.mock("@chessplay-clone/db", () => ({
   prisma: {
     $transaction: (fn: (t: typeof tx) => unknown) => fn(tx),
-    liveSession: { findMany: (...a: unknown[]) => liveSessionFindMany(...a) },
+    liveSession: {
+      findMany: (...a: unknown[]) => liveSessionFindMany(...a),
+      findFirst: (...a: unknown[]) => liveSessionFindFirst(...a),
+    },
   },
 }));
 
-const { createLiveSession, listUpcomingSessionsForClassrooms } = await import(
-  "./liveSessionRepository"
-);
+// visibleClassroomWhere is deliberately the real one, not a mock: the point of
+// these cases is that the session read composes the *same* rule the classroom
+// read enforces, so stubbing it would assert nothing.
+const { createLiveSession, listUpcomingSessionsForClassrooms, getLiveSessionForViewer } =
+  await import("./liveSessionRepository");
 
 beforeEach(() => {
   liveSessionCreate.mockReset();
   liveSessionUpdate.mockReset();
   liveSessionFindMany.mockReset();
+  liveSessionFindFirst.mockReset();
   liveSessionCreate.mockResolvedValue({ id: "ls_1" });
   liveSessionUpdate.mockResolvedValue({ id: "ls_1" });
   liveSessionFindMany.mockResolvedValue([]);
+  liveSessionFindFirst.mockResolvedValue(null);
 });
 
 describe("createLiveSession", () => {
@@ -63,6 +71,52 @@ describe("createLiveSession", () => {
     const [args] = liveSessionCreate.mock.calls[0] as [{ data: Record<string, unknown> }];
     expect(args.data.tenantId).toBe("tenant_1");
     expect(args.data.socketRoomId).toEqual(expect.any(String));
+  });
+});
+
+// The bug: the live session page read by id with a tenant filter only, so any
+// signed-in member of the academy could load any session's page. The socket's
+// canAccessLiveSession still refused the board, so what leaked was the
+// scheduled time and duration — plus a page that looks like it should work.
+describe("getLiveSessionForViewer", () => {
+  const viewer = (role: string) => ({ tenantId: "tenant_1", id: "user_1", role: role as never });
+
+  function whereOf() {
+    const [args] = liveSessionFindFirst.mock.calls[0] as [{ where: Record<string, any> }];
+    return args.where;
+  }
+
+  it("scopes by tenant and id", async () => {
+    await getLiveSessionForViewer(viewer("COACH"), "ls_1");
+    expect(whereOf()).toMatchObject({ id: "ls_1", tenantId: "tenant_1" });
+  });
+
+  it("requires the viewer to be in the session's classroom", async () => {
+    await getLiveSessionForViewer(viewer("STUDENT"), "ls_1");
+    expect(whereOf().classroom).toEqual({
+      deletedAt: null,
+      students: { some: { student: { userId: "user_1" } } },
+    });
+  });
+
+  // An admin sees the whole academy, but a deleted classroom is still gone —
+  // that half of the filter is not role-dependent.
+  it("still excludes a soft-deleted classroom for an ACADEMY_ADMIN", async () => {
+    await getLiveSessionForViewer(viewer("ACADEMY_ADMIN"), "ls_1");
+    expect(whereOf().classroom).toEqual({ deletedAt: null });
+  });
+
+  it("never issues a query with no classroom filter at all", async () => {
+    for (const role of ["ACADEMY_ADMIN", "COACH", "STUDENT", "PARENT"]) {
+      liveSessionFindFirst.mockClear();
+      await getLiveSessionForViewer(viewer(role), "ls_1");
+      expect(whereOf().classroom, `${role} has no classroom filter`).toBeDefined();
+    }
+  });
+
+  it("returns null for a session the viewer cannot reach", async () => {
+    liveSessionFindFirst.mockResolvedValue(null);
+    expect(await getLiveSessionForViewer(viewer("PARENT"), "someone_elses")).toBeNull();
   });
 });
 

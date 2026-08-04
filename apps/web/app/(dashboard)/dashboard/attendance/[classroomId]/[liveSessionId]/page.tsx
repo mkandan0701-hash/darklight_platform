@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { getCurrentSession } from "../../../../../../lib/auth/session";
 import { requireRole } from "../../../../../../lib/auth/requireRole";
 import { formatInZone } from "../../../../../../lib/time";
-import { getClassroom } from "../../../../../../repositories/classroomRepository";
+import { getClassroomForViewer } from "../../../../../../repositories/classroomRepository";
 import { getLiveSession } from "../../../../../../repositories/liveSessionRepository";
 import { getAttendanceForSession } from "../../../../../../repositories/attendanceRepository";
 import { MarkAttendanceForm, type RosterRow } from "../../MarkAttendanceForm";
@@ -21,8 +21,11 @@ export default async function MarkAttendancePage({
     notFound();
   }
 
+  // Membership-scoped, matching markAttendanceAction's own check — the form
+  // this page renders was already refused for a classroom the coach isn't
+  // assigned to, so without this the page offered a roster it couldn't submit.
   const [classroom, liveSession] = await Promise.all([
-    getClassroom(session.tenantId, params.classroomId),
+    getClassroomForViewer(session, params.classroomId),
     getLiveSession(session.tenantId, params.liveSessionId),
   ]);
   // Same nested-route consistency check the live session page makes: a session

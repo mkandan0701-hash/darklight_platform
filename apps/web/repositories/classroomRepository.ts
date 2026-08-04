@@ -44,6 +44,24 @@ function membershipWhere(viewer: ClassroomViewer): Prisma.ClassroomWhereInput {
   }
 }
 
+/**
+ * The complete "which rooms may this viewer see" filter — membership plus the
+ * soft-delete exclusion.
+ *
+ * Exported because everything a classroom owns inherits that answer: live
+ * sessions, assignments, attendance. Those repositories nest this under
+ * `classroom:` rather than restating the four roles, so the rule has one home
+ * and a new role has one place to be considered. It bundles `deletedAt: null`
+ * on purpose — a nested caller composing membership alone would happily serve
+ * the sessions of a deleted classroom, and that omission is invisible at the
+ * call site.
+ */
+export function visibleClassroomWhere(
+  viewer: ClassroomViewer
+): Prisma.ClassroomWhereInput {
+  return { deletedAt: null, ...membershipWhere(viewer) };
+}
+
 export async function createClassroom(
   tenantId: string,
   name: string,
@@ -57,7 +75,7 @@ export async function createClassroom(
 // entry point would only be a way to skip the membership filter by accident.
 export async function listClassroomsForViewer(viewer: ClassroomViewer) {
   return prisma.classroom.findMany({
-    where: { tenantId: viewer.tenantId, deletedAt: null, ...membershipWhere(viewer) },
+    where: { tenantId: viewer.tenantId, ...visibleClassroomWhere(viewer) },
     include: CLASSROOM_INCLUDE,
     orderBy: { createdAt: "asc" },
   });
@@ -86,8 +104,7 @@ export async function getClassroomForViewer(
     where: {
       id: classroomId,
       tenantId: viewer.tenantId,
-      deletedAt: null,
-      ...membershipWhere(viewer),
+      ...visibleClassroomWhere(viewer),
     },
     include: CLASSROOM_INCLUDE,
   });

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCurrentSession } from "../../../../../../../lib/auth/session";
 import { requireRole } from "../../../../../../../lib/auth/requireRole";
-import { getLiveSession } from "../../../../../../../repositories/liveSessionRepository";
+import { getLiveSessionForViewer } from "../../../../../../../repositories/liveSessionRepository";
 import { formatInZone } from "../../../../../../../lib/time";
 import { LiveBoard } from "../../../../../../../components/LiveBoard";
 import { pageHeadingClass, textLinkClass } from "../../../../../../../components/ui/styles";
@@ -13,7 +13,9 @@ export default async function LiveSessionPage({
   params: { classroomId: string; liveSessionId: string };
 }) {
   const session = await getCurrentSession();
-  const liveSession = await getLiveSession(session.tenantId, params.liveSessionId);
+  // Membership-scoped: a session in a classroom the viewer isn't in 404s
+  // instead of showing its time and duration to anyone in the academy.
+  const liveSession = await getLiveSessionForViewer(session, params.liveSessionId);
   if (!liveSession || liveSession.classroomId !== params.classroomId) {
     notFound();
   }

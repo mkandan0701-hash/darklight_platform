@@ -4,7 +4,7 @@ import { getCurrentSession } from "../../../../../lib/auth/session";
 import { requireRole } from "../../../../../lib/auth/requireRole";
 import { getStudentProfileByUserId } from "../../../../../repositories/userRepository";
 import {
-  getAssignment,
+  getAssignmentForViewer,
   getAssignmentCompletionForClassroom,
   getStudentPuzzleStatuses,
 } from "../../../../../repositories/assignmentRepository";
@@ -31,7 +31,10 @@ export default async function AssignmentDetailPage({
   params: { assignmentId: string };
 }) {
   const session = await getCurrentSession();
-  const assignment = await getAssignment(session.tenantId, params.assignmentId);
+  // Membership-scoped, which is what gates the coach/admin branch below: the
+  // student branch re-checks enrolment by profile id, but staff had only a
+  // role check and could read any classroom's completion table.
+  const assignment = await getAssignmentForViewer(session, params.assignmentId);
   if (!assignment) notFound();
 
   const isCoachOrAdmin = (() => {
