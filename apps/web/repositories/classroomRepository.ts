@@ -1,5 +1,6 @@
 import { prisma, type Prisma } from "@chessplay-clone/db";
 import type { Role } from "@chessplay-clone/shared";
+import { TenantMismatchError } from "../lib/auth/errors";
 
 const CLASSROOM_INCLUDE = {
   coaches: { include: { coach: { include: { user: true } } } },
@@ -117,11 +118,43 @@ export async function getClassroomForViewer(
   });
 }
 
+/**
+ * Both ids come off a form, so both are checked against the caller's tenant
+ * before anything is written.
+ *
+ * Neither the tenant-scoping extension nor the database catches this. The row
+ * being inserted carries the *caller's* tenantId, so tenantScope is satisfied;
+ * it is the referenced rows that may belong to someone else, and a foreign key
+ * only asks whether a row exists, never whose it is. The result would be
+ * another academy's coach on this academy's roster — with their email rendered
+ * on the classroom page, since CLASSROOM_INCLUDE pulls in coach.user.
+ *
+ * Throws rather than returning null: claude.md §7 puts typed errors in the
+ * repository and their translation at the route boundary, and unlike a read
+ * there is no sensible "not found" result to hand back for a write that must
+ * not happen.
+ */
 export async function assignCoach(
   tenantId: string,
   classroomId: string,
   coachProfileId: string
 ) {
+  const [classroom, coach] = await Promise.all([
+    prisma.classroom.findFirst({
+      where: { id: classroomId, tenantId, deletedAt: null },
+      select: { id: true },
+    }),
+    prisma.coachProfile.findFirst({
+      where: { id: coachProfileId, tenantId },
+      select: { id: true },
+    }),
+  ]);
+  if (!classroom || !coach) {
+    throw new TenantMismatchError(
+      "Classroom or coach does not belong to this academy"
+    );
+  }
+
   return prisma.classroomCoach.create({
     data: { tenantId, classroomId, coachId: coachProfileId },
   });
@@ -141,11 +174,28 @@ export async function isCoachAssignedToClassroom(
   return link !== null;
 }
 
+/** Same guard as assignCoach, for the student side of the roster. */
 export async function enrollStudent(
   tenantId: string,
   classroomId: string,
   studentProfileId: string
 ) {
+  const [classroom, student] = await Promise.all([
+    prisma.classroom.findFirst({
+      where: { id: classroomId, tenantId, deletedAt: null },
+      select: { id: true },
+    }),
+    prisma.studentProfile.findFirst({
+      where: { id: studentProfileId, tenantId },
+      select: { id: true },
+    }),
+  ]);
+  if (!classroom || !student) {
+    throw new TenantMismatchError(
+      "Classroom or student does not belong to this academy"
+    );
+  }
+
   return prisma.classroomStudent.create({
     data: { tenantId, classroomId, studentId: studentProfileId },
   });

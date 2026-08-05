@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { requireRole } from "../../../../lib/auth/requireRole";
+import { TenantMismatchError } from "../../../../lib/auth/errors";
 import { zonedLocalToUtc } from "../../../../lib/time";
 import {
   createClassroom,
@@ -77,7 +78,16 @@ export async function assignCoachAction(formData: FormData): Promise<ActionResul
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  await assignCoach(session.tenantId, parsed.data.classroomId, parsed.data.profileId);
+  // The repository refuses ids belonging to another academy; this is the route
+  // boundary that turns that into a message rather than a 500 (claude.md §7).
+  try {
+    await assignCoach(session.tenantId, parsed.data.classroomId, parsed.data.profileId);
+  } catch (err) {
+    if (err instanceof TenantMismatchError) {
+      return { ok: false, error: "That coach or classroom isn't part of your academy" };
+    }
+    throw err;
+  }
   revalidatePath(`/dashboard/classrooms/${parsed.data.classroomId}`);
   return { ok: true };
 }
@@ -95,7 +105,14 @@ export async function enrollStudentAction(formData: FormData): Promise<ActionRes
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  await enrollStudent(session.tenantId, parsed.data.classroomId, parsed.data.profileId);
+  try {
+    await enrollStudent(session.tenantId, parsed.data.classroomId, parsed.data.profileId);
+  } catch (err) {
+    if (err instanceof TenantMismatchError) {
+      return { ok: false, error: "That student or classroom isn't part of your academy" };
+    }
+    throw err;
+  }
   revalidatePath(`/dashboard/classrooms/${parsed.data.classroomId}`);
   return { ok: true };
 }

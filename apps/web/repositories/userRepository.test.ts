@@ -7,6 +7,9 @@ const update = vi.fn();
 const updateMany = vi.fn();
 const deleteMany = vi.fn();
 
+const parentProfileFindFirst = vi.fn();
+const studentProfileFindFirst = vi.fn();
+
 vi.mock("@chessplay-clone/db", () => ({
   prisma: {
     parentStudent: {
@@ -17,6 +20,8 @@ vi.mock("@chessplay-clone/db", () => ({
       updateMany: (...a: unknown[]) => updateMany(...a),
       deleteMany: (...a: unknown[]) => deleteMany(...a),
     },
+    parentProfile: { findFirst: (...a: unknown[]) => parentProfileFindFirst(...a) },
+    studentProfile: { findFirst: (...a: unknown[]) => studentProfileFindFirst(...a) },
   },
 }));
 
@@ -30,11 +35,23 @@ const {
 const LINK = { tenantId: "tenant_1", parentProfileId: "parent_1", studentProfileId: "student_1" };
 
 beforeEach(() => {
-  [findFirst, findMany, create, update, updateMany, deleteMany].forEach((m) => m.mockReset());
+  [
+    findFirst,
+    findMany,
+    create,
+    update,
+    updateMany,
+    deleteMany,
+    parentProfileFindFirst,
+    studentProfileFindFirst,
+  ].forEach((m) => m.mockReset());
   findFirst.mockResolvedValue(null);
   findMany.mockResolvedValue([]);
   create.mockResolvedValue({ id: "ps_1" });
   update.mockResolvedValue({ id: "ps_1", deletedAt: null });
+  // Both profiles belong to the caller unless a test says otherwise.
+  parentProfileFindFirst.mockResolvedValue({ id: "parent_1" });
+  studentProfileFindFirst.mockResolvedValue({ id: "student_1" });
 });
 
 // unlinkParentFromStudent was the one hard DELETE left in the application.
@@ -108,5 +125,53 @@ describe("reads exclude retired links", () => {
     await listParentStudentLinks("tenant_1");
     const [args] = findMany.mock.calls[0] as [{ where: Record<string, unknown> }];
     expect(args.where).toMatchObject({ tenantId: "tenant_1", deletedAt: null });
+  });
+});
+
+// The most damaging of the foreign-id holes. Unchecked, an admin could link a
+// parent in their own academy to a student in a *different* one — and unlike
+// the roster writes, which expose an email, this grants standing access: the
+// PARENT branch of membershipWhere then hands that parent the other academy's
+// child's classrooms, homework and attendance for as long as the link lives.
+describe("linkParentToStudent tenant ownership", () => {
+  it("checks both profiles against the caller's tenant", async () => {
+    await linkParentToStudent(LINK);
+
+    expect(parentProfileFindFirst.mock.calls[0][0].where).toEqual({
+      id: "parent_1",
+      tenantId: "tenant_1",
+    });
+    expect(studentProfileFindFirst.mock.calls[0][0].where).toEqual({
+      id: "student_1",
+      tenantId: "tenant_1",
+    });
+  });
+
+  it("refuses a student from another academy", async () => {
+    studentProfileFindFirst.mockResolvedValue(null);
+    await expect(linkParentToStudent(LINK)).rejects.toThrow(
+      /does not belong to this academy/
+    );
+    expect(create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a parent from another academy", async () => {
+    parentProfileFindFirst.mockResolvedValue(null);
+    await expect(linkParentToStudent(LINK)).rejects.toThrow(
+      /does not belong to this academy/
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  // The ownership check must run before the revive path too, or a link retired
+  // for good reason could be resurrected with foreign ids.
+  it("refuses foreign ids even when a soft-deleted link already exists", async () => {
+    findFirst.mockResolvedValue({ id: "ps_1", deletedAt: new Date() });
+    studentProfileFindFirst.mockResolvedValue(null);
+    await expect(linkParentToStudent(LINK)).rejects.toThrow(
+      /does not belong to this academy/
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 });

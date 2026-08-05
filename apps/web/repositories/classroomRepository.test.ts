@@ -2,6 +2,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const findMany = vi.fn();
 const findFirst = vi.fn();
+const coachProfileFindFirst = vi.fn();
+const studentProfileFindFirst = vi.fn();
+const classroomCoachCreate = vi.fn();
+const classroomStudentCreate = vi.fn();
 
 vi.mock("@chessplay-clone/db", () => ({
   prisma: {
@@ -9,12 +13,19 @@ vi.mock("@chessplay-clone/db", () => ({
       findMany: (...a: unknown[]) => findMany(...a),
       findFirst: (...a: unknown[]) => findFirst(...a),
     },
+    coachProfile: { findFirst: (...a: unknown[]) => coachProfileFindFirst(...a) },
+    studentProfile: { findFirst: (...a: unknown[]) => studentProfileFindFirst(...a) },
+    classroomCoach: { create: (...a: unknown[]) => classroomCoachCreate(...a) },
+    classroomStudent: { create: (...a: unknown[]) => classroomStudentCreate(...a) },
   },
 }));
 
-const { listClassroomsForViewer, getClassroomForViewer } = await import(
-  "./classroomRepository"
-);
+const {
+  listClassroomsForViewer,
+  getClassroomForViewer,
+  assignCoach,
+  enrollStudent,
+} = await import("./classroomRepository");
 
 const viewer = (role: string) => ({ tenantId: "tenant_1", id: "user_1", role: role as never });
 
@@ -24,9 +35,18 @@ function whereOf(mock: typeof findMany) {
 }
 
 beforeEach(() => {
-  [findMany, findFirst].forEach((m) => m.mockReset());
+  [
+    findMany,
+    findFirst,
+    coachProfileFindFirst,
+    studentProfileFindFirst,
+    classroomCoachCreate,
+    classroomStudentCreate,
+  ].forEach((m) => m.mockReset());
   findMany.mockResolvedValue([]);
   findFirst.mockResolvedValue(null);
+  coachProfileFindFirst.mockResolvedValue(null);
+  studentProfileFindFirst.mockResolvedValue(null);
 });
 
 // The bug this file exists for: listClassrooms was tenant-scoped but not
@@ -127,5 +147,92 @@ describe("getClassroomForViewer", () => {
   it("returns null for a classroom the viewer is not in", async () => {
     findFirst.mockResolvedValue(null);
     expect(await getClassroomForViewer(viewer("STUDENT"), "someone_elses_room")).toBeNull();
+  });
+});
+
+// The roster writes take *two* ids off a form — the classroom and the profile
+// — and neither the tenant-scoping extension nor a foreign key checks whose
+// they are. The row being inserted carries the caller's own tenantId, which
+// satisfies tenantScope; the referenced rows can belong to another academy
+// entirely, putting their coach or student (and their email, via
+// CLASSROOM_INCLUDE) onto this academy's roster.
+describe("assignCoach", () => {
+  it("scopes both lookups to the caller's tenant", async () => {
+    findFirst.mockResolvedValue({ id: "c_1" });
+    coachProfileFindFirst.mockResolvedValue({ id: "coach_1" });
+
+    await assignCoach("tenant_1", "c_1", "coach_1");
+
+    expect(findFirst.mock.calls[0][0].where).toMatchObject({
+      id: "c_1",
+      tenantId: "tenant_1",
+      deletedAt: null,
+    });
+    expect(coachProfileFindFirst.mock.calls[0][0].where).toEqual({
+      id: "coach_1",
+      tenantId: "tenant_1",
+    });
+  });
+
+  it("refuses a coach from another academy", async () => {
+    findFirst.mockResolvedValue({ id: "c_1" });
+    coachProfileFindFirst.mockResolvedValue(null);
+
+    await expect(assignCoach("tenant_1", "c_1", "other_tenants_coach")).rejects.toThrow(
+      /does not belong to this academy/
+    );
+    expect(classroomCoachCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a classroom from another academy", async () => {
+    findFirst.mockResolvedValue(null);
+    coachProfileFindFirst.mockResolvedValue({ id: "coach_1" });
+
+    await expect(assignCoach("tenant_1", "someone_elses", "coach_1")).rejects.toThrow(
+      /does not belong to this academy/
+    );
+    expect(classroomCoachCreate).not.toHaveBeenCalled();
+  });
+
+  it("writes when both belong to the caller", async () => {
+    findFirst.mockResolvedValue({ id: "c_1" });
+    coachProfileFindFirst.mockResolvedValue({ id: "coach_1" });
+
+    await assignCoach("tenant_1", "c_1", "coach_1");
+    expect(classroomCoachCreate).toHaveBeenCalledWith({
+      data: { tenantId: "tenant_1", classroomId: "c_1", coachId: "coach_1" },
+    });
+  });
+});
+
+describe("enrollStudent", () => {
+  it("refuses a student from another academy", async () => {
+    findFirst.mockResolvedValue({ id: "c_1" });
+    studentProfileFindFirst.mockResolvedValue(null);
+
+    await expect(
+      enrollStudent("tenant_1", "c_1", "other_tenants_student")
+    ).rejects.toThrow(/does not belong to this academy/);
+    expect(classroomStudentCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a classroom from another academy", async () => {
+    findFirst.mockResolvedValue(null);
+    studentProfileFindFirst.mockResolvedValue({ id: "stu_1" });
+
+    await expect(enrollStudent("tenant_1", "someone_elses", "stu_1")).rejects.toThrow(
+      /does not belong to this academy/
+    );
+    expect(classroomStudentCreate).not.toHaveBeenCalled();
+  });
+
+  it("writes when both belong to the caller", async () => {
+    findFirst.mockResolvedValue({ id: "c_1" });
+    studentProfileFindFirst.mockResolvedValue({ id: "stu_1" });
+
+    await enrollStudent("tenant_1", "c_1", "stu_1");
+    expect(classroomStudentCreate).toHaveBeenCalledWith({
+      data: { tenantId: "tenant_1", classroomId: "c_1", studentId: "stu_1" },
+    });
   });
 });

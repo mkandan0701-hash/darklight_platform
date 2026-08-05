@@ -1,4 +1,5 @@
 import { prisma } from "@chessplay-clone/db";
+import { TenantMismatchError } from "../lib/auth/errors";
 import {
   visibleClassroomWhere,
   type ClassroomViewer,
@@ -13,6 +14,28 @@ export async function createAssignment(
   tenantId: string,
   input: { classroomId: string; title: string; dueAtUtc: Date | null; puzzleIds: string[] }
 ) {
+  // Puzzle is exempt from the tenant-scoping guard (it mixes global LICHESS
+  // rows with private UPLOAD ones), so nothing else stops a puzzleId from
+  // another academy's uploads being assigned here. The rule below is exactly
+  // what listAssignablePuzzles offers the picker — global, or ours.
+  if (input.puzzleIds.length > 0) {
+    const assignable = await prisma.puzzle.findMany({
+      where: {
+        id: { in: input.puzzleIds },
+        OR: [{ tenantId: null }, { tenantId }],
+      },
+      select: { id: true },
+    });
+    if (assignable.length !== new Set(input.puzzleIds).size) {
+      // The whole create is refused rather than the offending ids dropped: a
+      // coach who picked ten puzzles and silently got six would only find out
+      // from a student.
+      throw new TenantMismatchError(
+        "One or more puzzles are not available to this academy"
+      );
+    }
+  }
+
   return prisma.$transaction(async (tx) => {
     const assignment = await tx.assignment.create({
       data: {

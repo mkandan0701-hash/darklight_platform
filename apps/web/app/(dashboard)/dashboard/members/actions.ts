@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { requireRole } from "../../../../lib/auth/requireRole";
+import { TenantMismatchError } from "../../../../lib/auth/errors";
 import { createSupabaseAdminClient } from "../../../../lib/supabase/admin";
 import { getTenantById } from "../../../../repositories/tenantRepository";
 import {
@@ -115,7 +116,13 @@ export async function linkParentStudent(formData: FormData): Promise<ActionResul
       parentProfileId: parsed.data.parentProfileId,
       studentProfileId: parsed.data.studentProfileId,
     });
-  } catch {
+  } catch (err) {
+    // Distinguished from a generic failure because it is the one case the
+    // admin can act on — and the one that would otherwise have granted a
+    // parent access to another academy's child.
+    if (err instanceof TenantMismatchError) {
+      return { ok: false, error: "That parent or student isn't part of your academy" };
+    }
     return { ok: false, error: "Could not link this parent to this student" };
   }
 

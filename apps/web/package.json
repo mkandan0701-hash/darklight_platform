@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "verify:auth-hook": "tsx --env-file=.env.local scripts/verifyAccessTokenHook.ts",
     "verify:dashboards": "tsx --env-file=.env.local scripts/verifyDashboards.ts",
     "seed:demo": "tsx --env-file=.env.local scripts/seedHomeworkDemo.ts"

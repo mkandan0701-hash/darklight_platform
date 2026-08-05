@@ -1,5 +1,6 @@
 import { prisma } from "@chessplay-clone/db";
 import type { Role } from "@chessplay-clone/shared";
+import { TenantMismatchError } from "../lib/auth/errors";
 
 export async function createUserWithProfile(input: {
   tenantId: string;
@@ -78,6 +79,28 @@ export async function linkParentToStudent(input: {
   parentProfileId: string;
   studentProfileId: string;
 }) {
+  // Both ids arrive from a form. Unchecked, this is the most damaging of the
+  // foreign-id holes: it doesn't expose one field, it grants a parent in one
+  // academy standing access to a child in another — their classrooms,
+  // homework and attendance — for as long as the link exists. tenantScope
+  // passes it because the ParentStudent row carries the caller's own
+  // tenantId; only the referenced profiles are foreign.
+  const [parent, student] = await Promise.all([
+    prisma.parentProfile.findFirst({
+      where: { id: input.parentProfileId, tenantId: input.tenantId },
+      select: { id: true },
+    }),
+    prisma.studentProfile.findFirst({
+      where: { id: input.studentProfileId, tenantId: input.tenantId },
+      select: { id: true },
+    }),
+  ]);
+  if (!parent || !student) {
+    throw new TenantMismatchError(
+      "Parent or student does not belong to this academy"
+    );
+  }
+
   const existing = await prisma.parentStudent.findFirst({
     where: {
       tenantId: input.tenantId,

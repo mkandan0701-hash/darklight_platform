@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { requireRole } from "../../../../lib/auth/requireRole";
+import { TenantMismatchError } from "../../../../lib/auth/errors";
 import { zonedLocalToUtc } from "../../../../lib/time";
 import { scorePuzzleAttempt } from "../../../../lib/puzzles/scorePuzzleAttempt";
 import {
@@ -71,12 +72,20 @@ export async function createAssignmentAction(formData: FormData): Promise<Action
     }
   }
 
-  await createAssignment(session.tenantId, {
-    classroomId: parsed.data.classroomId,
-    title: parsed.data.title,
-    dueAtUtc,
-    puzzleIds: parsed.data.puzzleIds,
-  });
+  try {
+    await createAssignment(session.tenantId, {
+      classroomId: parsed.data.classroomId,
+      title: parsed.data.title,
+      dueAtUtc,
+      puzzleIds: parsed.data.puzzleIds,
+    });
+  } catch (err) {
+    // Raised when a puzzle id is neither global nor this academy's own upload.
+    if (err instanceof TenantMismatchError) {
+      return { ok: false, error: "One or more puzzles aren't available to your academy" };
+    }
+    throw err;
+  }
   revalidatePath("/dashboard/homework");
   return { ok: true };
 }
