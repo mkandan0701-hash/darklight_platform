@@ -186,3 +186,72 @@ npm run build
 ```
 
 Builds `packages/db` → `packages/shared` → `apps/web` → `apps/api`, in that order (workspaces depend on the two packages).
+
+## Deploying
+
+### A wildcard domain is a hard requirement
+
+Every academy lives on its own subdomain, so the deployment needs `*.yourdomain.com`
+pointed at Vercel with a wildcard certificate. This is not cosmetic:
+`resolveSubdomain` classifies **every** `*.vercel.app` host as apex
+(`packages/shared/src/subdomain.ts`), deliberately — a preview deployment's
+subdomain is the project name, not a tenant. On a bare `*.vercel.app` URL the
+marketing site and `/signup` work, `/dashboard` redirects to `/signup` because no
+`Tenant` resolves from the host, and invites are refused outright with *"Invites
+need a tenant subdomain"*.
+
+DNS records:
+
+| Record | Name | Value |
+|---|---|---|
+| A / CNAME | `@` | as issued by Vercel |
+| CNAME | `*` | `cname.vercel-dns.com` |
+
+Add both the apex and `*.yourdomain.com` as domains on the Vercel project; the
+wildcard certificate is issued by DNS validation.
+
+### Frontend → Vercel
+
+`vercel.json` at the repo root drives the build, so leave the project's **Root
+Directory at the repository root** — not `apps/web`. The build runs
+`scripts/vercelBuild.mjs`, which does `prisma generate` → migrations (production
+only) → `packages/db` → `packages/shared` → `apps/web`. `prisma generate` has to
+come first because `packages/db` re-exports the generated client, and Vercel's
+dependency cache can otherwise restore a client older than the schema.
+
+**Migrations run only when `VERCEL_ENV=production`.** Preview deploys share
+`DATABASE_URL` unless you give them their own, so an ungated `migrate deploy`
+would let a build from an abandoned branch migrate production.
+
+Environment variables to set on the Vercel project:
+
+| Variable | Notes |
+|---|---|
+| `DATABASE_URL` | Supabase pooled connection (`?pgbouncer=true`) |
+| `DIRECT_URL` | Direct connection — migrations cannot run through the pooler |
+| `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_URL` | Same value |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_ANON_KEY` | Same value |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only; never exposed to the browser |
+| `SUPABASE_JWT_SECRET` | Verifies the tenant/role claims |
+| `NEXT_PUBLIC_ROOT_DOMAIN` | e.g. `yourdomain.com` — no scheme, no subdomain |
+| `NEXT_PUBLIC_API_URL` | The Railway API's URL; only live sessions need it |
+
+Stripe, Razorpay, WhatsApp, Resend and `ANTHROPIC_API_KEY` can be left unset —
+nothing in the codebase calls them yet, so their absence cannot break a build.
+
+### Supabase console, again
+
+The three manual steps under "Supabase Auth console setup" above are per-project
+**and** per-domain. Redo them against the production domain — in particular the
+redirect allow-list needs `https://*.yourdomain.com/auth/callback`, and without
+the custom access token hook every issued JWT lacks `tenant_id`/`role`, which
+takes down every Socket.io connection.
+
+### API → Railway (only needed for live sessions)
+
+`apps/api` builds with `npm run build -w apps/api` and starts with `npm start -w
+apps/api`. It needs `REDIS_URL`, `DATABASE_URL`, `DIRECT_URL` and
+`SUPABASE_JWT_SECRET`. Without Redis the board store and the Socket.io adapter
+both fail and `join-room` hangs — every live session looks broken. Everything
+else in the product (auth, classrooms, homework, puzzles, play vs computer,
+analysis board) works without the API running at all.

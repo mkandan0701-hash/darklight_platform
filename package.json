@@ -12,6 +12,7 @@
     "build": "npm run build -w packages/db && npm run build -w packages/shared && npm run build -w apps/web && npm run build -w apps/api",
     "db:generate": "npm run generate -w packages/db",
     "db:migrate": "npm run migrate -w packages/db",
+    "db:migrate:deploy": "npm run migrate:deploy -w packages/db",
     "test": "npm run test --workspaces --if-present"
   }
 }
