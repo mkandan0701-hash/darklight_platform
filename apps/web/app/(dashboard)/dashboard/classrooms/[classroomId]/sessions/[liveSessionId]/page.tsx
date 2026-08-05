@@ -4,6 +4,10 @@ import { getCurrentSession } from "../../../../../../../lib/auth/session";
 import { requireRole } from "../../../../../../../lib/auth/requireRole";
 import { getLiveSessionForViewer } from "../../../../../../../repositories/liveSessionRepository";
 import { formatInZone } from "../../../../../../../lib/time";
+import {
+  effectiveSessionStatus,
+  sessionStatusLabel,
+} from "../../../../../../../lib/liveSession";
 import { LiveBoard } from "../../../../../../../components/LiveBoard";
 import { pageHeadingClass, textLinkClass } from "../../../../../../../components/ui/styles";
 
@@ -20,6 +24,8 @@ export default async function LiveSessionPage({
     notFound();
   }
 
+  const status = effectiveSessionStatus(liveSession);
+
   const canMarkAttendance = (() => {
     try {
       requireRole(session, ["ACADEMY_ADMIN", "COACH"]);
@@ -35,7 +41,10 @@ export default async function LiveSessionPage({
         {formatInZone(liveSession.scheduledAtUtc, session.timezone)}
       </h1>
       <p className="mt-1 font-mono text-sm text-slate">
-        {liveSession.durationMins} minutes
+        {/* The row is still reachable by URL after it drops out of the
+            upcoming list, so the state has to be visible here — otherwise a
+            cancelled class looks like a working one that nobody joins. */}
+        {sessionStatusLabel(status)} · {liveSession.durationMins} minutes
         {canMarkAttendance && (
           <>
             {" · "}

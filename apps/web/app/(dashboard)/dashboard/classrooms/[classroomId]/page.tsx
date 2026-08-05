@@ -5,6 +5,8 @@ import { requireRole } from "../../../../../lib/auth/requireRole";
 import { getClassroomForViewer } from "../../../../../repositories/classroomRepository";
 import { listUpcomingSessions } from "../../../../../repositories/liveSessionRepository";
 import { formatInZone, nextWeekendLocalDefault } from "../../../../../lib/time";
+import { effectiveSessionStatus, sessionStatusLabel } from "../../../../../lib/liveSession";
+import { CancelSessionButton } from "./CancelSessionButton";
 import { RosterForms } from "./RosterForms";
 import { ScheduleSessionForm } from "./ScheduleSessionForm";
 import { Card } from "../../../../../components/ui/Card";
@@ -94,19 +96,35 @@ export default async function ClassroomDetailPage({
           </div>
         ) : (
           <ul className="mt-3 space-y-2">
-            {upcomingSessions.map((liveSession) => (
-              <Card key={liveSession.id} className="flex items-center justify-between p-4">
-                <Link
-                  href={`/dashboard/classrooms/${classroom.id}/sessions/${liveSession.id}`}
-                  className={textLinkClass}
-                >
-                  {formatInZone(liveSession.scheduledAtUtc, session.timezone)}
-                </Link>
-                <span className="font-mono text-xs text-slate">
-                  {liveSession.durationMins} min
-                </span>
-              </Card>
-            ))}
+            {upcomingSessions.map((liveSession) => {
+              const status = effectiveSessionStatus(liveSession);
+              return (
+                <Card key={liveSession.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <Link
+                    href={`/dashboard/classrooms/${classroom.id}/sessions/${liveSession.id}`}
+                    className={textLinkClass}
+                  >
+                    {formatInZone(liveSession.scheduledAtUtc, session.timezone)}
+                  </Link>
+                  <div className="flex items-center gap-3">
+                    {status === "LIVE" && (
+                      <span className="rounded bg-board px-2 py-0.5 text-xs font-medium text-white">
+                        {sessionStatusLabel(status)}
+                      </span>
+                    )}
+                    <span className="font-mono text-xs text-slate">
+                      {liveSession.durationMins} min
+                    </span>
+                    {canSchedule && (
+                      <CancelSessionButton
+                        classroomId={classroom.id}
+                        liveSessionId={liveSession.id}
+                      />
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
           </ul>
         )}
 

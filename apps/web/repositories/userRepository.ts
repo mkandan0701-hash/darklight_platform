@@ -62,7 +62,7 @@ export async function listParentsAndStudents(tenantId: string) {
 
 export async function listParentStudentLinks(tenantId: string) {
   return prisma.parentStudent.findMany({
-    where: { tenantId },
+    where: { tenantId, deletedAt: null },
     include: {
       parent: { include: { user: true } },
       student: { include: { user: true } },
@@ -85,7 +85,18 @@ export async function linkParentToStudent(input: {
       studentId: input.studentProfileId,
     },
   });
-  if (existing) return existing;
+  // The lookup above deliberately ignores deletedAt. Since unlinking became a
+  // soft delete the unique constraint on [parentId, studentId] still covers
+  // the retired row, so inserting a fresh one would violate it — re-linking
+  // has to revive the row that is already there, which also keeps the history
+  // on one row instead of scattering it across several.
+  if (existing) {
+    if (!existing.deletedAt) return existing;
+    return prisma.parentStudent.update({
+      where: { id: existing.id, tenantId: input.tenantId },
+      data: { deletedAt: null },
+    });
+  }
 
   return prisma.parentStudent.create({
     data: {
@@ -96,9 +107,17 @@ export async function linkParentToStudent(input: {
   });
 }
 
+// Soft, because this was the one hard DELETE left anywhere in the application
+// and claude.md §4 forbids it: who had access to a child's record, and until
+// when, is exactly the audit trail parents and coaches need.
+//
+// Revoking access is the reads' job, not this write's — listStudentsForParent
+// and the PARENT branch of membershipWhere both exclude deleted links, so an
+// unlinked parent stops seeing the child immediately.
 export async function unlinkParentFromStudent(input: { tenantId: string; linkId: string }) {
-  await prisma.parentStudent.deleteMany({
-    where: { tenantId: input.tenantId, id: input.linkId },
+  await prisma.parentStudent.updateMany({
+    where: { tenantId: input.tenantId, id: input.linkId, deletedAt: null },
+    data: { deletedAt: new Date() },
   });
 }
 
@@ -122,7 +141,7 @@ export async function getParentProfileByUserId(tenantId: string, userId: string)
 // is admin-gated — do not reuse that one for a parent-facing view.
 export async function listStudentsForParent(tenantId: string, parentProfileId: string) {
   return prisma.parentStudent.findMany({
-    where: { tenantId, parentId: parentProfileId },
+    where: { tenantId, parentId: parentProfileId, deletedAt: null },
     include: { student: { include: { user: true } } },
   });
 }

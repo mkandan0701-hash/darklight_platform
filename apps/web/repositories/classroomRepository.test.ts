@@ -71,8 +71,21 @@ describe("listClassroomsForViewer", () => {
   it("limits a PARENT to rooms their own children are enrolled in", async () => {
     await listClassroomsForViewer(viewer("PARENT"));
     expect(whereOf(findMany).students).toEqual({
-      some: { student: { parents: { some: { parent: { userId: "user_1" } } } } },
+      some: {
+        student: {
+          parents: { some: { parent: { userId: "user_1" }, deletedAt: null } },
+        },
+      },
     });
+  });
+
+  // Unlinking a parent is a soft delete, so the link row survives. Without
+  // deletedAt on the nested filter the removed parent keeps seeing the child's
+  // classrooms — the revocation would be cosmetic.
+  it("stops counting a link once it has been soft-deleted", async () => {
+    await listClassroomsForViewer(viewer("PARENT"));
+    const parents = (whereOf(findMany).students as any).some.student.parents;
+    expect(parents.some.deletedAt).toBeNull();
   });
 
   // The half a post-fetch .filter() in the page could never cover.
@@ -100,7 +113,11 @@ describe("getClassroomForViewer", () => {
       tenantId: "tenant_1",
       deletedAt: null,
       students: {
-        some: { student: { parents: { some: { parent: { userId: "user_1" } } } } },
+        some: {
+          student: {
+            parents: { some: { parent: { userId: "user_1" }, deletedAt: null } },
+          },
+        },
       },
     });
   });

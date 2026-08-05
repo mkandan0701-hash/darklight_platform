@@ -46,7 +46,13 @@ describe("getAssignmentForViewer", () => {
     await getAssignmentForViewer(viewer("PARENT"), "a_1");
     expect(whereOf().classroom).toEqual({
       deletedAt: null,
-      students: { some: { student: { parents: { some: { parent: { userId: "user_1" } } } } } },
+      students: {
+        some: {
+          student: {
+            parents: { some: { parent: { userId: "user_1" }, deletedAt: null } },
+          },
+        },
+      },
     });
   });
 

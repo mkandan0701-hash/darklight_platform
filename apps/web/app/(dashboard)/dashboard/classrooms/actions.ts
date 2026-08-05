@@ -9,10 +9,33 @@ import {
   createClassroom,
   assignCoach,
   enrollStudent,
+  isCoachAssignedToClassroom,
 } from "../../../../repositories/classroomRepository";
-import { createLiveSession } from "../../../../repositories/liveSessionRepository";
+import {
+  cancelLiveSession,
+  createLiveSession,
+  getLiveSession,
+} from "../../../../repositories/liveSessionRepository";
+import { getCoachProfileByUserId } from "../../../../repositories/userRepository";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Role says "staff"; this says "staff *in this room*".
+ *
+ * Same check markAttendanceAction and createAssignmentAction make. Without it
+ * a coach can act on a classroom they don't teach just by supplying its id —
+ * the write-path twin of the read bugs fixed in b87c3cf.
+ */
+async function coachMayActOnClassroom(
+  session: { tenantId: string; id: string; role: string },
+  classroomId: string
+): Promise<boolean> {
+  if (session.role !== "COACH") return true; // admins already cleared by requireRole
+  const coachProfile = await getCoachProfileByUserId(session.tenantId, session.id);
+  if (!coachProfile) return false;
+  return isCoachAssignedToClassroom(session.tenantId, classroomId, coachProfile.id);
+}
 
 const CreateClassroomSchema = z.object({
   name: z.string().min(2, "Classroom name is required"),
@@ -96,6 +119,10 @@ export async function scheduleSessionAction(formData: FormData): Promise<ActionR
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
+  if (!(await coachMayActOnClassroom(session, parsed.data.classroomId))) {
+    return { ok: false, error: "You aren't assigned to this classroom" };
+  }
+
   // Entered in the scheduler's own timezone, stored in UTC — every viewer
   // (student in PST, parent in EST) sees it converted to their own zone, not
   // the sender's. See lib/time.ts.
@@ -112,6 +139,44 @@ export async function scheduleSessionAction(formData: FormData): Promise<ActionR
     scheduledAtUtc,
     durationMins: parsed.data.durationMins,
   });
+  revalidatePath(`/dashboard/classrooms/${parsed.data.classroomId}`);
+  return { ok: true };
+}
+
+const CancelSessionSchema = z.object({
+  classroomId: z.string().min(1),
+  liveSessionId: z.string().min(1),
+});
+
+export async function cancelSessionAction(formData: FormData): Promise<ActionResult> {
+  const session = await getCurrentSession();
+  try {
+    requireRole(session, ["ACADEMY_ADMIN", "COACH"]);
+  } catch {
+    return { ok: false, error: "Only admins or coaches can cancel sessions" };
+  }
+
+  const parsed = CancelSessionSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  if (!(await coachMayActOnClassroom(session, parsed.data.classroomId))) {
+    return { ok: false, error: "You aren't assigned to this classroom" };
+  }
+
+  // Nested-route consistency: holding rights to *this* classroom must not make
+  // another classroom's session cancellable by passing its id. Same check the
+  // attendance action makes.
+  const liveSession = await getLiveSession(session.tenantId, parsed.data.liveSessionId);
+  if (!liveSession || liveSession.classroomId !== parsed.data.classroomId) {
+    return { ok: false, error: "Session not found in this classroom" };
+  }
+
+  if (!(await cancelLiveSession(session.tenantId, parsed.data.liveSessionId))) {
+    return { ok: false, error: "Session not found" };
+  }
+
   revalidatePath(`/dashboard/classrooms/${parsed.data.classroomId}`);
   return { ok: true };
 }

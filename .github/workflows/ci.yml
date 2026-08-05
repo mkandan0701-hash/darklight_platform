@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's result irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Unit tests and the type-check. No database: everything here mocks Prisma,
+  # which is why it can run on a bare runner in under a couple of minutes.
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Before anything compiles: packages/db re-exports the generated client,
+      # so tsc has nothing to resolve without it. Same ordering constraint the
+      # Vercel build has (scripts/vercelBuild.mjs).
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Test
+        run: npm run test
+
+      # The only thing that type-checks the App Router pages — Vitest never
+      # loads an async server component, so a broken page call site reaches
+      # production unless the build runs here.
+      - name: Build
+        run: npm run build
+
+  # Split from the job above because it needs a database and is therefore
+  # slower and likelier to be flaky. A red integration job should not hide a
+  # green unit run, or vice versa.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: chessplay_test
+        ports:
+          - 5432:5432
+        # Without this the job races the container: psql accepts connections
+        # several seconds after Docker reports the container as started.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Both point at the same server: pgbouncer is a Supabase concern, and
+      # migrations need the direct connection regardless.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/chessplay_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/chessplay_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      # migrate deploy, not db push: this asserts the committed migration files
+      # actually apply to an empty database, which is exactly what production
+      # does on release and nothing else checks.
+      - name: Apply migrations
+        run: npm run db:migrate:deploy
+
+      - name: Integration tests
+        run: npm run test:integration

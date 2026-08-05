@@ -131,6 +131,12 @@ model ParentStudent {
   studentId String
   parent    ParentProfile  @relation(fields: [parentId], references: [id])
   student   StudentProfile @relation(fields: [studentId], references: [id])
+  // Unlinking a parent used to be the one hard DELETE in the application
+  // (claude.md §4 forbids it — coaches and parents need an audit trail of who
+  // had access to a child's record and when). The unique constraint below
+  // still covers deleted rows, so re-linking revives the row rather than
+  // inserting a second one; see linkParentToStudent.
+  deletedAt DateTime?
 
   @@unique([parentId, studentId])
   @@index([tenantId])

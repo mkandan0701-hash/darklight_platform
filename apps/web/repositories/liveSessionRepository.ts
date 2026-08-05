@@ -30,9 +30,28 @@ export async function createLiveSession(input: {
 
 export async function listUpcomingSessions(tenantId: string, classroomId: string) {
   return prisma.liveSession.findMany({
-    where: { tenantId, classroomId, scheduledAtUtc: { gte: new Date() } },
+    // A cancelled class is not upcoming, whatever its clock says. Everything
+    // else about the lifecycle is derived (lib/liveSession.ts); CANCELLED is
+    // the one state stored on the row, so it is the one state a query filters.
+    where: {
+      tenantId,
+      classroomId,
+      status: { not: "CANCELLED" },
+      scheduledAtUtc: { gte: new Date() },
+    },
     orderBy: { scheduledAtUtc: "asc" },
   });
+}
+
+// Sticky and deliberately one-way: there is no un-cancel. Reinstating a class
+// people were told was off should be a new session with a new invitation, not
+// a silent revert.
+export async function cancelLiveSession(tenantId: string, liveSessionId: string) {
+  const result = await prisma.liveSession.updateMany({
+    where: { id: liveSessionId, tenantId },
+    data: { status: "CANCELLED" },
+  });
+  return result.count > 0;
 }
 
 // Attendance is marked for sessions that have already happened, and
@@ -65,6 +84,7 @@ export async function listUpcomingSessionsForClassrooms(
     where: {
       tenantId,
       classroomId: { in: classroomIds },
+      status: { not: "CANCELLED" },
       scheduledAtUtc: { gte: new Date() },
     },
     include: { classroom: true },

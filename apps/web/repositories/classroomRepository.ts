@@ -28,11 +28,18 @@ function membershipWhere(viewer: ClassroomViewer): Prisma.ClassroomWhereInput {
       return { coaches: { some: { coach: { userId: viewer.id } } } };
     case "STUDENT":
       return { students: { some: { student: { userId: viewer.id } } } };
-    // A parent inherits their children's rooms and nothing else.
+    // A parent inherits their children's rooms and nothing else. `deletedAt:
+    // null` on the link is what makes unlinking take effect — without it a
+    // parent removed from a child keeps seeing that child's classrooms,
+    // because unlinking is a soft delete and the row is still there.
     case "PARENT":
       return {
         students: {
-          some: { student: { parents: { some: { parent: { userId: viewer.id } } } } },
+          some: {
+            student: {
+              parents: { some: { parent: { userId: viewer.id }, deletedAt: null } },
+            },
+          },
         },
       };
     default: {

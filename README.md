@@ -247,6 +247,36 @@ redirect allow-list needs `https://*.yourdomain.com/auth/callback`, and without
 the custom access token hook every issued JWT lacks `tenant_id`/`role`, which
 takes down every Socket.io connection.
 
+### TURN relay (audio reliability)
+
+The code is done — `apps/web/lib/audio/turnCredentials.ts` implements coturn's
+`use-auth-secret` scheme, handing the browser a short-lived HMAC credential so
+the shared secret never leaves the server. What is missing is a relay to point
+it at. Until then audio is STUN-only and fails for roughly 10–20% of users:
+symmetric NAT and restrictive corporate firewalls, which is a real share of
+India↔US home and office traffic.
+
+Two ways to provide one, both a matter of setting three variables:
+
+**Cloudflare Calls** — no server to run. Create a TURN key in the Cloudflare
+dashboard, then set `TURN_URLS` to the issued `turn:`/`turns:` endpoints and
+`TURN_SECRET` to the key.
+
+**coturn on Railway** — deploy the `coturn/coturn` image with
+`--use-auth-secret --static-auth-secret=<secret> --realm=<yourdomain>`, expose
+UDP 3478 (and 5349 for TLS), then point the variables at it.
+
+| Variable | Value |
+|---|---|
+| `TURN_URLS` | Comma-separated, e.g. `turn:relay.example:3478,turns:relay.example:5349` |
+| `TURN_SECRET` | The static auth secret — server-side only, never `NEXT_PUBLIC_` |
+| `TURN_TTL_SECONDS` | Optional, defaults to 3600 |
+
+Set them on the **web** app: credentials are minted server-side and handed to
+the client with the ICE configuration. `apps/web/lib/audio/iceServers.ts` falls
+back to STUN alone when they are unset, so a missing relay degrades rather than
+breaks.
+
 ### API → Railway (only needed for live sessions)
 
 `apps/api` builds with `npm run build -w apps/api` and starts with `npm start -w
