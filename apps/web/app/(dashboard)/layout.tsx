@@ -79,8 +79,18 @@ export default async function DashboardLayout({
     }
   })();
 
+  const isParent = (() => {
+    try {
+      requireRole(session, ["PARENT"]);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
   const links = [
     { href: "/dashboard", label: "Dashboard" },
+    ...(isParent ? [{ href: "/dashboard/children", label: "Children" }] : []),
     { href: "/dashboard/classrooms", label: "Classrooms" },
     { href: "/dashboard/homework", label: "Homework" },
     ...(canMarkAttendance ? [{ href: "/dashboard/attendance", label: "Attendance" }] : []),

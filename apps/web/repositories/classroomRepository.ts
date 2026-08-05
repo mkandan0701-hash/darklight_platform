@@ -110,6 +110,25 @@ export async function getClassroomForViewer(
   });
 }
 
+// One child's rooms, for the parent portal's per-child views.
+// listClassroomsForViewer can't serve this: for a PARENT it returns the union
+// across every child they have, so a session it yields can't be attributed to
+// one of them. Callers must have cleared the viewer against this student
+// first (getChildForParent) — this takes a profile id, not a viewer.
+export async function listClassroomsForStudent(
+  tenantId: string,
+  studentProfileId: string
+) {
+  return prisma.classroom.findMany({
+    where: {
+      tenantId,
+      deletedAt: null,
+      students: { some: { studentId: studentProfileId } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
 export async function assignCoach(
   tenantId: string,
   classroomId: string,

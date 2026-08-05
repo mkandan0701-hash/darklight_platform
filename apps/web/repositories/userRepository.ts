@@ -1,5 +1,6 @@
 import { prisma } from "@chessplay-clone/db";
 import type { Role } from "@chessplay-clone/shared";
+import type { ClassroomViewer } from "./classroomRepository";
 
 export async function createUserWithProfile(input: {
   tenantId: string;
@@ -124,5 +125,37 @@ export async function listStudentsForParent(tenantId: string, parentProfileId: s
   return prisma.parentStudent.findMany({
     where: { tenantId, parentId: parentProfileId },
     include: { student: { include: { user: true } } },
+  });
+}
+
+/**
+ * One child, but only if this viewer is a parent of theirs.
+ *
+ * The gate for every /dashboard/children/[studentId] read. Those routes take a
+ * student id straight off the URL, which is the shape of the three bugs fixed
+ * in b87c3cf/e9f6e4c — so the check is a `where` fragment here rather than a
+ * comparison in the page, and the reads that follow can take a plain
+ * studentProfileId because this has already run.
+ *
+ * Null, not a throw, for a child that isn't theirs: indistinguishable from one
+ * that doesn't exist, so the page's notFound() confirms nothing about which
+ * student ids are real.
+ *
+ * Deliberately the same shape as membershipWhere's PARENT case, and it
+ * resolves the ParentProfile inside the same query — a separate
+ * getParentProfileByUserId first would be a second round trip and a second
+ * place to forget the tenant filter.
+ */
+export async function getChildForParent(
+  viewer: ClassroomViewer,
+  studentProfileId: string
+) {
+  return prisma.studentProfile.findFirst({
+    where: {
+      id: studentProfileId,
+      tenantId: viewer.tenantId,
+      parents: { some: { parent: { userId: viewer.id } } },
+    },
+    include: { user: true },
   });
 }

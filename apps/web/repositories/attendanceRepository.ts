@@ -1,5 +1,5 @@
 import { prisma } from "@chessplay-clone/db";
-import { countAttendance, type MarkedSession } from "../lib/attendance";
+import { countAttendance, eligibleSessions, type MarkedSession } from "../lib/attendance";
 
 export type AttendanceMode = "ONLINE" | "OFFLINE";
 
@@ -171,6 +171,83 @@ export async function getStudentAttendanceSummary(
     sessionCount += counts.sessionCount;
   }
   return { attendedCount, sessionCount };
+}
+
+export type StudentAttendanceRow = {
+  liveSessionId: string;
+  classroomId: string;
+  classroomName: string;
+  scheduledAtUtc: Date;
+  present: boolean;
+};
+
+/**
+ * One student's attendance session by session — the rows behind the summary
+ * getStudentAttendanceSummary returns.
+ *
+ * Shares that function's structure exactly: enrolments are the row source, so
+ * each classroom is judged against its own enrolment date, and the same
+ * foldAttendanceRecords + eligibleSessions pair does the filtering. The two
+ * therefore agree by construction rather than by review — see the note on
+ * eligibleSessions.
+ *
+ * `take` bounds the list for a page; it is applied after the sort, so it keeps
+ * the most recent sessions rather than an arbitrary slice.
+ */
+export async function getStudentAttendanceDetail(
+  tenantId: string,
+  studentProfileId: string,
+  take: number
+): Promise<StudentAttendanceRow[]> {
+  const enrollments = await prisma.classroomStudent.findMany({
+    where: { tenantId, studentId: studentProfileId },
+    select: {
+      classroomId: true,
+      enrolledAt: true,
+      classroom: { select: { name: true } },
+    },
+  });
+  if (enrollments.length === 0) return [];
+
+  const records = await prisma.attendanceRecord.findMany({
+    where: {
+      tenantId,
+      liveSession: { classroomId: { in: enrollments.map((e) => e.classroomId) } },
+    },
+    select: {
+      liveSessionId: true,
+      studentId: true,
+      present: true,
+      liveSession: { select: { scheduledAtUtc: true, classroomId: true } },
+    },
+  });
+
+  const rows: StudentAttendanceRow[] = [];
+  for (const enrollment of enrollments) {
+    const scoped = records.filter(
+      (r) => r.liveSession.classroomId === enrollment.classroomId
+    );
+    const { markedSessions, presentByStudent } = foldAttendanceRecords(scoped);
+    for (const session of eligibleSessions({
+      enrolledAt: enrollment.enrolledAt,
+      markedSessions,
+      presentSessionIds: presentByStudent.get(studentProfileId) ?? new Set(),
+    })) {
+      rows.push({
+        liveSessionId: session.liveSessionId,
+        classroomId: enrollment.classroomId,
+        classroomName: enrollment.classroom.name,
+        scheduledAtUtc: session.scheduledAtUtc,
+        present: session.present,
+      });
+    }
+  }
+
+  // eligibleSessions sorts within a classroom; a student in two classes needs
+  // the merged list re-sorted before it is truncated.
+  return rows
+    .sort((a, b) => b.scheduledAtUtc.getTime() - a.scheduledAtUtc.getTime())
+    .slice(0, take);
 }
 
 type RawRecord = {

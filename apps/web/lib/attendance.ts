@@ -44,12 +44,35 @@ export function countAttendance(params: {
   markedSessions: MarkedSession[];
   presentSessionIds: ReadonlySet<string>;
 }): { attendedCount: number; sessionCount: number } {
-  const eligible = params.markedSessions.filter(
-    (s) => s.scheduledAtUtc.getTime() >= params.enrolledAt.getTime()
-  );
+  const eligible = eligibleSessions(params);
   return {
     sessionCount: eligible.length,
-    attendedCount: eligible.filter((s) => params.presentSessionIds.has(s.liveSessionId))
-      .length,
+    attendedCount: eligible.filter((s) => s.present).length,
   };
+}
+
+/**
+ * The same sessions countAttendance counts, each carrying whether the student
+ * was there — the row-level view behind the summary.
+ *
+ * countAttendance is defined in terms of this rather than repeating the
+ * filter, which is the whole point: a parent reading five absences off the
+ * detail list and 90% off the summary card would be looking at a bug, and two
+ * independent filters is how that bug arrives. Derive one from the other and
+ * they cannot disagree.
+ *
+ * `present: false` covers both "marked absent" and "not marked at all for a
+ * session the class was marked for" — countAttendance has always treated
+ * those the same way, and splitting them here would change the numbers.
+ * Newest first: the last lesson is the one anybody asks about.
+ */
+export function eligibleSessions(params: {
+  enrolledAt: Date;
+  markedSessions: MarkedSession[];
+  presentSessionIds: ReadonlySet<string>;
+}): Array<MarkedSession & { present: boolean }> {
+  return params.markedSessions
+    .filter((s) => s.scheduledAtUtc.getTime() >= params.enrolledAt.getTime())
+    .map((s) => ({ ...s, present: params.presentSessionIds.has(s.liveSessionId) }))
+    .sort((a, b) => b.scheduledAtUtc.getTime() - a.scheduledAtUtc.getTime());
 }

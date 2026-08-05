@@ -14,6 +14,8 @@ import {
 } from "../../../repositories/assignmentRepository";
 import { getStudentAttendanceSummary } from "../../../repositories/attendanceRepository";
 import { formatAttendanceRate } from "../../../lib/attendance";
+import { displayName } from "../../../lib/displayName";
+import { SessionList } from "../../../components/dashboard/SessionList";
 import { Card } from "../../../components/ui/Card";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { RankProgressBar } from "../../../components/ui/RankProgressBar";
@@ -24,48 +26,8 @@ import { pageHeadingClass, sectionHeadingClass, textLinkClass } from "../../../c
 const ASSIGNMENT_PREVIEW_LIMIT = 5;
 const SESSION_PREVIEW_LIMIT = 5;
 
-type UpcomingSession = Awaited<
-  ReturnType<typeof listUpcomingSessionsForClassrooms>
->[number];
-
 function greeting(session: CurrentSession) {
-  return session.email.split("@")[0] || session.email;
-}
-
-function SessionList({
-  sessions,
-  timezone,
-  emptyDescription,
-}: {
-  sessions: UpcomingSession[];
-  timezone: string;
-  emptyDescription: string;
-}) {
-  if (sessions.length === 0) {
-    return (
-      <div className="mt-3">
-        <EmptyState title="No sessions scheduled" description={emptyDescription} />
-      </div>
-    );
-  }
-  return (
-    <ul className="mt-3 space-y-2">
-      {sessions.map((liveSession) => (
-        <Card key={liveSession.id} className="flex items-center justify-between gap-4 p-4">
-          <Link
-            href={`/dashboard/classrooms/${liveSession.classroomId}/sessions/${liveSession.id}`}
-            className={textLinkClass}
-          >
-            {/* Always the viewer's zone, never the scheduler's (claude.md §3.5). */}
-            {formatInZone(liveSession.scheduledAtUtc, timezone)}
-          </Link>
-          <span className="text-xs text-slate">
-            {liveSession.classroom.name} · {liveSession.durationMins} min
-          </span>
-        </Card>
-      ))}
-    </ul>
-  );
+  return displayName(session.email);
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
@@ -210,7 +172,8 @@ export default async function DashboardHomePage() {
         );
         const attendance = await getStudentAttendanceSummary(session.tenantId, link.studentId);
         return {
-          name: link.student.user.email.split("@")[0] || link.student.user.email,
+          studentId: link.studentId,
+          name: displayName(link.student.user.email),
           assignmentCount: assignments.length,
           completedCount: done.filter(Boolean).length,
           attendance,
@@ -234,10 +197,15 @@ export default async function DashboardHomePage() {
             <ul className="mt-3 space-y-2">
               {children.map((child) => (
                 <Card
-                  key={child.name}
+                  key={child.studentId}
                   className="flex flex-wrap items-center justify-between gap-3 p-4"
                 >
-                  <span className="font-medium text-ink">{child.name}</span>
+                  <Link
+                    href={`/dashboard/children/${child.studentId}`}
+                    className={textLinkClass}
+                  >
+                    {child.name}
+                  </Link>
                   <div className="flex flex-wrap items-center gap-4">
                     <RankProgressBar
                       completed={child.attendance.attendedCount}
@@ -265,8 +233,11 @@ export default async function DashboardHomePage() {
               ))}
             </ul>
           )}
+          {/* Deliberately says nothing about invoices: nothing creates one
+              yet, and a portal that promises billing it doesn't have is worse
+              than one that stays quiet about it. */}
           <p className="mt-3 text-xs text-slate">
-            Detailed progress and invoices arrive with the parent portal.
+            Open a child for their attendance record, homework and upcoming classes.
           </p>
         </section>
       </div>
