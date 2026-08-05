@@ -11,6 +11,17 @@ import { stripeWebhookRouter } from "./webhooks/stripe";
 import { razorpayWebhookRouter } from "./webhooks/razorpay";
 import { whatsappWebhookRouter } from "./webhooks/whatsapp";
 
+// Node's default for an unhandled rejection is already to crash, but silently
+// enough that Railway shows a restart with no cause. Logging first is the whole
+// point of this handler; the exit is what the default would have done anyway,
+// and Railway restarts us. Clients reconnect and re-join their room, so a
+// restart costs a live session a few seconds rather than the lesson — which is
+// why the webhook handlers catch their own errors instead of reaching here.
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled rejection at:", promise, "reason:", reason);
+  process.exit(1);
+});
+
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });

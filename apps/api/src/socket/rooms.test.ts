@@ -570,6 +570,20 @@ describe("audio", () => {
     });
   });
 
+  // Being on the shared board is not being in the call: an audio-leave from a
+  // socket that never joined would otherwise push a departure into a call it
+  // was never part of.
+  it("refuses an audio-leave from a socket that never joined the call", () => {
+    const { socket, io } = setup(studentData);
+    socket.join("session:au7b");
+
+    const ack = vi.fn();
+    socket.handlers.get("audio-leave")!({ liveSessionId: "au7b" }, ack);
+
+    expect(ack).toHaveBeenCalledWith(false, "not joined to this session's audio");
+    expect(io.emitted).toHaveLength(0);
+  });
+
   // A closed tab must not leave a ghost in everyone else's participant list.
   // This uses `disconnecting`, not `disconnect` — socket.rooms is already
   // empty by the time the latter fires.

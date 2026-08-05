@@ -44,6 +44,17 @@ npm workspaces monorepo:
    npm run db:migrate
    ```
 
+4. Build the shared packages once:
+
+   ```
+   npm run build -w packages/db && npm run build -w packages/shared
+   ```
+
+   `@chessplay-clone/db` and `@chessplay-clone/shared` resolve to their compiled
+   `dist/` output, not `src/` — that is what lets `apps/api` run under plain
+   `node` in production. The cost is that both apps read the *last built* copy of
+   those two packages, so rebuild them after editing either one.
+
 ## Running locally
 
 ```
@@ -279,8 +290,12 @@ breaks.
 
 ### API → Railway (only needed for live sessions)
 
-`apps/api` builds with `npm run build -w apps/api` and starts with `npm start -w
-apps/api`. It needs `REDIS_URL`, `DATABASE_URL`, `DIRECT_URL` and
+`apps/api` builds with `npm run build` (from the repo root) and starts with
+`npm start -w apps/api`. Build the whole workspace, not just `-w apps/api`:
+`@chessplay-clone/db` and `@chessplay-clone/shared` resolve to `dist/index.js`
+at runtime, so they have to be compiled before `apps/api` starts or `node
+dist/index.js` throws `Cannot find module`. The root `build` script runs them in
+that order. It needs `REDIS_URL`, `DATABASE_URL`, `DIRECT_URL` and
 `SUPABASE_JWT_SECRET`. Without Redis the board store and the Socket.io adapter
 both fail and `join-room` hangs — every live session looks broken. Everything
 else in the product (auth, classrooms, homework, puzzles, play vs computer,

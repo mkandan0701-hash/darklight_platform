@@ -354,6 +354,13 @@ export function registerLiveSessionHandlers(
       return;
     }
     const room = audioRoom(parsed.data.liveSessionId);
+    // Same gate as audio-signal: without it any authenticated socket can emit
+    // audio-peer-left into a call it was never in, and the id it names is its
+    // own — so the only room whose membership matters is one it has joined.
+    if (!inRoom(room)) {
+      ack?.(false, "not joined to this session's audio");
+      return;
+    }
     socket.leave(room);
     io.to(room).emit("audio-peer-left", { peerId: socket.id });
     ack?.(true);
