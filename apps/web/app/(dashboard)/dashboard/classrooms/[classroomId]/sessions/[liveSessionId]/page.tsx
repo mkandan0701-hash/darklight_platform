@@ -9,7 +9,12 @@ import {
   sessionStatusLabel,
 } from "../../../../../../../lib/liveSession";
 import { LiveBoard } from "../../../../../../../components/LiveBoard";
-import { pageHeadingClass, textLinkClass } from "../../../../../../../components/ui/styles";
+import { Card } from "../../../../../../../components/ui/Card";
+import {
+  pageHeadingClass,
+  sectionHeadingClass,
+  textLinkClass,
+} from "../../../../../../../components/ui/styles";
 
 export default async function LiveSessionPage({
   params,
@@ -35,6 +40,16 @@ export default async function LiveSessionPage({
     }
   })();
 
+  // Who the socket will actually admit to the shared board. `join-room` ends in
+  // canAccessLiveSession (apps/api/src/socket/rooms.ts), which checks
+  // isClassroomCoach for a COACH and isClassroomStudent for *every* other role
+  // — so a PARENT, and an ACADEMY_ADMIN who has no StudentProfile, are both
+  // refused. That refusal is correct: the shared room is a lesson, and its
+  // audio sub-room is a live mic in it. What was wrong is that this page
+  // rendered the board for them anyway and left them staring at "Could not
+  // join session". Mirror the socket's rule here instead of widening it.
+  const canJoinBoard = session.role === "COACH" || session.role === "STUDENT";
+
   return (
     <div>
       <h1 className={pageHeadingClass}>
@@ -58,11 +73,24 @@ export default async function LiveSessionPage({
         )}
       </p>
       <div className="mt-6">
-        <LiveBoard
-          liveSessionId={liveSession.id}
-          role={session.role}
-          timezone={session.timezone}
-        />
+        {canJoinBoard ? (
+          <LiveBoard
+            liveSessionId={liveSession.id}
+            role={session.role}
+            timezone={session.timezone}
+          />
+        ) : (
+          <Card>
+            <h2 className={sectionHeadingClass}>
+              {status === "CANCELLED" ? "This class was cancelled" : "Class details"}
+            </h2>
+            <p className="mt-2 text-sm text-slate">
+              The shared board is part of the lesson itself — the coach and the
+              enrolled students work on it together. You can see when this class
+              runs, and attendance appears here once the coach marks it.
+            </p>
+          </Card>
+        )}
       </div>
     </div>
   );

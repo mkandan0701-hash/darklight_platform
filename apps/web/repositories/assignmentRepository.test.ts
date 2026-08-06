@@ -4,6 +4,7 @@ const assignmentFindFirst = vi.fn();
 const puzzleFindMany = vi.fn();
 const assignmentCreate = vi.fn();
 const assignmentPuzzleCreateMany = vi.fn();
+const puzzleAttemptFindMany = vi.fn();
 
 const tx = {
   assignment: { create: (...a: unknown[]) => assignmentCreate(...a) },
@@ -14,15 +15,19 @@ vi.mock("@chessplay-clone/db", () => ({
   prisma: {
     assignment: { findFirst: (...a: unknown[]) => assignmentFindFirst(...a) },
     puzzle: { findMany: (...a: unknown[]) => puzzleFindMany(...a) },
+    puzzleAttempt: { findMany: (...a: unknown[]) => puzzleAttemptFindMany(...a) },
     $transaction: (fn: (t: typeof tx) => unknown) => fn(tx),
   },
 }));
 
 // The real visibleClassroomWhere, not a stub — these cases exist to prove the
 // assignment read composes the same rule the classroom read enforces.
-const { getAssignment, getAssignmentForViewer, createAssignment } = await import(
-  "./assignmentRepository"
-);
+const {
+  getAssignment,
+  getAssignmentForViewer,
+  createAssignment,
+  getStudentSolvedPuzzleIds,
+} = await import("./assignmentRepository");
 
 const viewer = (role: string) => ({ tenantId: "tenant_1", id: "user_1", role: role as never });
 
@@ -32,12 +37,17 @@ function whereOf() {
 }
 
 beforeEach(() => {
-  [assignmentFindFirst, puzzleFindMany, assignmentCreate, assignmentPuzzleCreateMany].forEach(
-    (m) => m.mockReset()
-  );
+  [
+    assignmentFindFirst,
+    puzzleFindMany,
+    assignmentCreate,
+    assignmentPuzzleCreateMany,
+    puzzleAttemptFindMany,
+  ].forEach((m) => m.mockReset());
   assignmentFindFirst.mockResolvedValue(null);
   assignmentCreate.mockResolvedValue({ id: "a_1" });
   assignmentPuzzleCreateMany.mockResolvedValue({ count: 0 });
+  puzzleAttemptFindMany.mockResolvedValue([]);
 });
 
 // The bug: the assignment detail page verified enrolment on its student branch
@@ -151,5 +161,72 @@ describe("createAssignment puzzle ownership", () => {
     await createAssignment("tenant_1", { ...input, puzzleIds: [] });
     expect(puzzleFindMany).not.toHaveBeenCalled();
     expect(assignmentCreate).toHaveBeenCalled();
+  });
+});
+
+// The N+1 this replaces: every page showing progress across N assignments
+// called getStudentPuzzleStatuses N times. The dashboard hid it behind a
+// five-assignment preview cap; the parent portal lists a child's whole
+// homework history, where capping would be the wrong fix.
+describe("getStudentSolvedPuzzleIds", () => {
+  it("issues exactly one query however many assignments are asked for", async () => {
+    puzzleAttemptFindMany.mockResolvedValue([]);
+
+    await getStudentSolvedPuzzleIds("tenant_1", "student_1", ["a_1", "a_2", "a_3", "a_4"]);
+
+    expect(puzzleAttemptFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("scopes by tenant, student and the given assignments, and only counts correct attempts", async () => {
+    await getStudentSolvedPuzzleIds("tenant_1", "student_1", ["a_1", "a_2"]);
+
+    const [args] = puzzleAttemptFindMany.mock.calls[0] as [{ where: Record<string, any> }];
+    expect(args.where).toMatchObject({
+      tenantId: "tenant_1",
+      studentId: "student_1",
+      assignmentId: { in: ["a_1", "a_2"] },
+      isCorrect: true,
+    });
+  });
+
+  // Every attempt is logged, right or wrong, so a student who solves the same
+  // puzzle twice has two correct rows. Without distinct they'd both land in the
+  // set — harmless here because it's a Set, but the distinct is what keeps the
+  // row count bounded by puzzles rather than by attempts.
+  it("asks the database to dedupe repeat solves of the same puzzle", async () => {
+    await getStudentSolvedPuzzleIds("tenant_1", "student_1", ["a_1"]);
+
+    const [args] = puzzleAttemptFindMany.mock.calls[0] as [{ distinct: string[] }];
+    expect(args.distinct).toEqual(["assignmentId", "puzzleId"]);
+  });
+
+  it("groups solved puzzle ids by assignment", async () => {
+    puzzleAttemptFindMany.mockResolvedValue([
+      { assignmentId: "a_1", puzzleId: "p_1" },
+      { assignmentId: "a_1", puzzleId: "p_2" },
+      { assignmentId: "a_2", puzzleId: "p_3" },
+    ]);
+
+    const solved = await getStudentSolvedPuzzleIds("tenant_1", "student_1", ["a_1", "a_2"]);
+
+    expect(solved.get("a_1")).toEqual(new Set(["p_1", "p_2"]));
+    expect(solved.get("a_2")).toEqual(new Set(["p_3"]));
+  });
+
+  // The caller reads `solved.get(id)?.size ?? 0`, so an assignment with nothing
+  // solved is simply absent rather than an empty Set it has to distinguish.
+  it("omits an assignment with no correct attempts", async () => {
+    puzzleAttemptFindMany.mockResolvedValue([{ assignmentId: "a_1", puzzleId: "p_1" }]);
+
+    const solved = await getStudentSolvedPuzzleIds("tenant_1", "student_1", ["a_1", "a_2"]);
+
+    expect(solved.has("a_2")).toBe(false);
+  });
+
+  it("returns an empty map without querying when there are no assignments", async () => {
+    const solved = await getStudentSolvedPuzzleIds("tenant_1", "student_1", []);
+
+    expect(solved.size).toBe(0);
+    expect(puzzleAttemptFindMany).not.toHaveBeenCalled();
   });
 });

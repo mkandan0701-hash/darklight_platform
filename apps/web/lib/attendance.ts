@@ -44,12 +44,31 @@ export function countAttendance(params: {
   markedSessions: MarkedSession[];
   presentSessionIds: ReadonlySet<string>;
 }): { attendedCount: number; sessionCount: number } {
-  const eligible = params.markedSessions.filter(
-    (s) => s.scheduledAtUtc.getTime() >= params.enrolledAt.getTime()
-  );
+  const eligible = eligibleSessions(params);
   return {
     sessionCount: eligible.length,
-    attendedCount: eligible.filter((s) => params.presentSessionIds.has(s.liveSessionId))
-      .length,
+    attendedCount: eligible.filter((s) => s.present).length,
   };
+}
+
+export type EligibleSession = MarkedSession & { present: boolean };
+
+/**
+ * The sessions that count for one student, newest first.
+ *
+ * This is `countAttendance`'s numerator and denominator before they collapse
+ * into two integers — the rows a parent reads down, resolved by exactly the
+ * rules the summary above is computed from. Two implementations of "which
+ * sessions count" would eventually disagree, and the way a parent finds out is
+ * a percentage that doesn't match the list under it.
+ */
+export function eligibleSessions(params: {
+  enrolledAt: Date;
+  markedSessions: MarkedSession[];
+  presentSessionIds: ReadonlySet<string>;
+}): EligibleSession[] {
+  return params.markedSessions
+    .filter((s) => s.scheduledAtUtc.getTime() >= params.enrolledAt.getTime())
+    .map((s) => ({ ...s, present: params.presentSessionIds.has(s.liveSessionId) }))
+    .sort((a, b) => b.scheduledAtUtc.getTime() - a.scheduledAtUtc.getTime());
 }

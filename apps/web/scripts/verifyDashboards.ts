@@ -159,6 +159,29 @@ async function main() {
     process.exit(1);
   }
 
+  // The parent portal is addressed by StudentProfile.id, not User.id.
+  const studentProfileId = tenant
+    ? (
+        await prismaBase.studentProfile.findFirst({
+          where: { tenantId: tenant.id, user: { email: "student@demo-academy.test" } },
+        })
+      )?.id
+    : undefined;
+  const otherStudentProfileId = tenant
+    ? (
+        await prismaBase.studentProfile.findFirst({
+          where: { tenantId: tenant.id, user: { email: OTHER_STUDENT_EMAIL } },
+        })
+      )?.id
+    : undefined;
+  if (!studentProfileId || !otherStudentProfileId) {
+    console.error(
+      "Missing seeded student profiles. Re-run scripts/seedHomeworkDemo.ts — the\n" +
+        "parent-portal checks address children by StudentProfile.id."
+    );
+    process.exit(1);
+  }
+
   for (const role of ROLES) {
     console.log(`\n${role.label}  (${role.email})`);
     const user = await prismaBase.user.findFirst({
@@ -255,6 +278,55 @@ async function main() {
       const res = await get("/dashboard/attendance", cookies);
       check(res.status === 404, "direct /dashboard/attendance request is refused", `got ${res.status}`);
     }
+
+    // --- Parent portal ---------------------------------------------------
+    const isParent = role.label === "PARENT";
+
+    // A parent reads about their child rather than doing homework or playing
+    // the engine, so those links leave their nav. Asserted in both directions
+    // so "missing for everyone" can't pass.
+    for (const [href, label] of [
+      ['href="/dashboard/homework"', "homework"],
+      ['href="/dashboard/play"', "play"],
+    ] as const) {
+      check(
+        dashboard.body.includes(href) === !isParent,
+        isParent ? `${label} is absent from the parent nav` : `${label} appears in the nav`
+      );
+    }
+
+    // The own-child page, and the two ways it must refuse.
+    const ownChild = await get(`/dashboard/children/${studentProfileId}`, cookies);
+    check(
+      ownChild.status === (isParent ? 200 : 404),
+      isParent ? "parent opens their own child's page" : "non-parent is refused the child page",
+      `got ${ownChild.status}`
+    );
+    if (isParent) {
+      for (const marker of ["Attendance", "Homework", "Next classes"]) {
+        check(ownChild.body.includes(marker), `child page renders "${marker}"`);
+      }
+      check(
+        !ownChild.body.includes("Application error") && !ownChild.body.includes("digest"),
+        "child page has no server-component error boundary"
+      );
+      check(
+        !ownChild.body.includes(OTHER_STUDENT_EMAIL),
+        "child page does not leak the other family's email"
+      );
+      renderedTimes.set("PARENT_CHILD", extractSessionTimes(ownChild.body));
+
+      // The revoked link. The seed links this parent to the other family's
+      // child and immediately unlinks, which soft-deletes the row — so this
+      // 404 is specifically the `deletedAt: null` filter doing its job, not
+      // merely the absence of a link.
+      const revokedChild = await get(`/dashboard/children/${otherStudentProfileId}`, cookies);
+      check(
+        revokedChild.status === 404,
+        "a revoked (soft-deleted) parent link no longer opens the child",
+        `got ${revokedChild.status}`
+      );
+    }
   }
 
   // The wedge feature, asserted against real rows rather than a unit test:
@@ -271,6 +343,21 @@ async function main() {
     check(
       coachTimes[0] !== studentTimes[0],
       "same session renders in each viewer's own zone"
+    );
+  }
+
+  // The same wedge, on the page built for the parent who is furthest from the
+  // coach. The seed puts the parent in Europe/London and the coach in
+  // Asia/Kolkata, so the child's next class must not read as the coach's
+  // wall-clock time.
+  const parentChildTimes = renderedTimes.get("PARENT_CHILD") ?? [];
+  if (coachTimes.length === 0 || parentChildTimes.length === 0) {
+    check(false, "the child page renders the upcoming session", "no formatted time found");
+  } else {
+    console.log(`  parent (child page) sees: ${parentChildTimes[0]}`);
+    check(
+      coachTimes[0] !== parentChildTimes[0],
+      "the child page renders in the parent's zone, not the coach's"
     );
   }
 

@@ -8,6 +8,7 @@ import {
 import { InviteForm } from "./InviteForm";
 import { ParentStudentLinks } from "./ParentStudentLinks";
 import { cardClass } from "../../../../components/ui/Card";
+import { Badge, type BadgeTone } from "../../../../components/ui/Badge";
 import {
   pageHeadingClass,
   tableWrapperClass,
@@ -17,11 +18,14 @@ import {
   theadRowClass,
 } from "../../../../components/ui/styles";
 
-const ROLE_BADGE_CLASS: Record<string, string> = {
-  ACADEMY_ADMIN: "bg-gold-light text-ink",
-  COACH: "bg-board-light text-board-dark",
-  STUDENT: "bg-parchment text-ink",
-  PARENT: "bg-parchment text-ink",
+// Staff stand out, the people they teach don't need to. STUDENT and PARENT
+// were "bg-parchment text-ink" before Badge existed; neutral is the same
+// background against the slate every other unremarkable pill in the app uses.
+const ROLE_BADGE_TONE: Record<string, BadgeTone> = {
+  ACADEMY_ADMIN: "warn",
+  COACH: "success",
+  STUDENT: "neutral",
+  PARENT: "neutral",
 };
 
 export default async function MembersPage() {
@@ -52,13 +56,9 @@ export default async function MembersPage() {
               <tr key={member.id} className={tbodyRowClass}>
                 <td className={tdClass}>{member.email}</td>
                 <td className={tdClass}>
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                      ROLE_BADGE_CLASS[member.role] ?? "bg-parchment text-ink"
-                    }`}
-                  >
+                  <Badge tone={ROLE_BADGE_TONE[member.role] ?? "neutral"}>
                     {member.role.replace("_", " ")}
-                  </span>
+                  </Badge>
                 </td>
               </tr>
             ))}

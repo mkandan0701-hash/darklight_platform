@@ -9,14 +9,17 @@ import {
   listStudentsForParent,
 } from "../../../repositories/userRepository";
 import {
-  getStudentPuzzleStatuses,
+  getStudentSolvedPuzzleIds,
   listAssignmentsForStudent,
 } from "../../../repositories/assignmentRepository";
 import { getStudentAttendanceSummary } from "../../../repositories/attendanceRepository";
 import { formatAttendanceRate } from "../../../lib/attendance";
+import { displayName } from "../../../lib/displayName";
 import { Card } from "../../../components/ui/Card";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { RankProgressBar } from "../../../components/ui/RankProgressBar";
+import { ChildSummaryCard } from "../../../components/dashboard/ChildSummaryCard";
+import { SessionList } from "../../../components/dashboard/SessionList";
 import { pageHeadingClass, sectionHeadingClass, textLinkClass } from "../../../components/ui/styles";
 
 // Bounds the per-assignment status queries on the student and parent views —
@@ -24,48 +27,24 @@ import { pageHeadingClass, sectionHeadingClass, textLinkClass } from "../../../c
 const ASSIGNMENT_PREVIEW_LIMIT = 5;
 const SESSION_PREVIEW_LIMIT = 5;
 
-type UpcomingSession = Awaited<
-  ReturnType<typeof listUpcomingSessionsForClassrooms>
->[number];
-
 function greeting(session: CurrentSession) {
-  return session.email.split("@")[0] || session.email;
+  return displayName(session.email);
 }
 
-function SessionList({
-  sessions,
-  timezone,
-  emptyDescription,
-}: {
-  sessions: UpcomingSession[];
-  timezone: string;
-  emptyDescription: string;
-}) {
-  if (sessions.length === 0) {
-    return (
-      <div className="mt-3">
-        <EmptyState title="No sessions scheduled" description={emptyDescription} />
-      </div>
-    );
-  }
-  return (
-    <ul className="mt-3 space-y-2">
-      {sessions.map((liveSession) => (
-        <Card key={liveSession.id} className="flex items-center justify-between gap-4 p-4">
-          <Link
-            href={`/dashboard/classrooms/${liveSession.classroomId}/sessions/${liveSession.id}`}
-            className={textLinkClass}
-          >
-            {/* Always the viewer's zone, never the scheduler's (claude.md §3.5). */}
-            {formatInZone(liveSession.scheduledAtUtc, timezone)}
-          </Link>
-          <span className="text-xs text-slate">
-            {liveSession.classroom.name} · {liveSession.durationMins} min
-          </span>
-        </Card>
-      ))}
-    </ul>
-  );
+/**
+ * How many of an assignment's puzzles this student has solved.
+ *
+ * Intersects against the assignment's *current* puzzles rather than counting
+ * attempt rows: a puzzle dropped from an assignment after being solved leaves
+ * its PuzzleAttempt behind, and a raw count would render as "3/2".
+ */
+function solvedCount(
+  assignment: { id: string; puzzles: { puzzleId: string }[] },
+  solvedByAssignment: Map<string, Set<string>>
+): number {
+  const solvedIds = solvedByAssignment.get(assignment.id);
+  if (!solvedIds) return 0;
+  return assignment.puzzles.filter((p) => solvedIds.has(p.puzzleId)).length;
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
@@ -99,19 +78,18 @@ export default async function DashboardHomePage() {
       : [];
 
     // listAssignmentsForStudent already sorts by dueAtUtc ascending.
-    const withProgress = studentProfile
-      ? await Promise.all(
-          assignments.map(async (assignment) => {
-            const statuses = await getStudentPuzzleStatuses(
-              session.tenantId,
-              assignment.id,
-              studentProfile.id
-            );
-            const solved = Array.from(statuses.values()).filter((s) => s === "solved").length;
-            return { assignment, solved };
-          })
+    // One query for the whole list, not one per assignment.
+    const solvedByAssignment = studentProfile
+      ? await getStudentSolvedPuzzleIds(
+          session.tenantId,
+          studentProfile.id,
+          assignments.map((a) => a.id)
         )
-      : [];
+      : new Map<string, Set<string>>();
+    const withProgress = assignments.map((assignment) => ({
+      assignment,
+      solved: solvedCount(assignment, solvedByAssignment),
+    }));
 
     const myClassrooms = await listClassroomsForViewer(session);
     const sessions = await listUpcomingSessionsForClassrooms(
@@ -197,22 +175,24 @@ export default async function DashboardHomePage() {
     const children = await Promise.all(
       links.map(async (link) => {
         const assignments = await listAssignmentsForStudent(session.tenantId, link.studentId);
-        const done = await Promise.all(
-          assignments.slice(0, ASSIGNMENT_PREVIEW_LIMIT).map(async (assignment) => {
-            const statuses = await getStudentPuzzleStatuses(
-              session.tenantId,
-              assignment.id,
-              link.studentId
-            );
-            const solved = Array.from(statuses.values()).filter((s) => s === "solved").length;
-            return solved === assignment.puzzles.length && assignment.puzzles.length > 0;
-          })
+        const preview = assignments.slice(0, ASSIGNMENT_PREVIEW_LIMIT);
+        // One query per child rather than one per assignment per child.
+        const solvedByAssignment = await getStudentSolvedPuzzleIds(
+          session.tenantId,
+          link.studentId,
+          preview.map((a) => a.id)
         );
+        const completedCount = preview.filter(
+          (assignment) =>
+            assignment.puzzles.length > 0 &&
+            solvedCount(assignment, solvedByAssignment) === assignment.puzzles.length
+        ).length;
         const attendance = await getStudentAttendanceSummary(session.tenantId, link.studentId);
         return {
-          name: link.student.user.email.split("@")[0] || link.student.user.email,
+          studentId: link.studentId,
+          name: displayName(link.student.user.email),
           assignmentCount: assignments.length,
-          completedCount: done.filter(Boolean).length,
+          completedCount,
           attendance,
         };
       })
@@ -233,41 +213,17 @@ export default async function DashboardHomePage() {
           ) : (
             <ul className="mt-3 space-y-2">
               {children.map((child) => (
-                <Card
-                  key={child.name}
-                  className="flex flex-wrap items-center justify-between gap-3 p-4"
-                >
-                  <span className="font-medium text-ink">{child.name}</span>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <RankProgressBar
-                      completed={child.attendance.attendedCount}
-                      total={child.attendance.sessionCount}
-                      label={`${child.name} attended ${child.attendance.attendedCount} of ${child.attendance.sessionCount} sessions`}
-                    />
-                    <span className="text-xs text-slate">
-                      {child.attendance.sessionCount === 0
-                        ? "no attendance marked yet"
-                        : `${formatAttendanceRate(
-                            child.attendance.attendedCount,
-                            child.attendance.sessionCount
-                          )} attendance`}
-                    </span>
-                    <span className="text-xs text-slate">
-                      {child.assignmentCount === 0
-                        ? "no homework yet"
-                        : `${child.completedCount} of ${Math.min(
-                            child.assignmentCount,
-                            ASSIGNMENT_PREVIEW_LIMIT
-                          )} recent assignments complete`}
-                    </span>
-                  </div>
-                </Card>
+                <ChildSummaryCard
+                  key={child.studentId}
+                  studentId={child.studentId}
+                  name={child.name}
+                  attendance={child.attendance}
+                  homeworkDone={child.completedCount}
+                  homeworkTotal={Math.min(child.assignmentCount, ASSIGNMENT_PREVIEW_LIMIT)}
+                />
               ))}
             </ul>
           )}
-          <p className="mt-3 text-xs text-slate">
-            Detailed progress and invoices arrive with the parent portal.
-          </p>
         </section>
       </div>
     );

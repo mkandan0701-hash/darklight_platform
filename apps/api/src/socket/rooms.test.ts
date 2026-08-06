@@ -50,6 +50,16 @@ const studentData: SocketSessionData = {
   appUser: { id: "user_student_1", email: "dev@academy.test" },
   displayName: "dev",
 };
+const parentData: SocketSessionData = {
+  session: { userId: "auth_parent_1", tenantId: "tenant_1", role: "PARENT" },
+  appUser: { id: "user_parent_1", email: "parent@academy.test" },
+  displayName: "parent",
+};
+const adminData: SocketSessionData = {
+  session: { userId: "auth_admin_1", tenantId: "tenant_1", role: "ACADEMY_ADMIN" },
+  appUser: { id: "user_admin_1", email: "admin@academy.test" },
+  displayName: "admin",
+};
 
 function createFakeSocket(data: SocketSessionData, id = "sock_self") {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -209,6 +219,46 @@ describe("join-room", () => {
     await socket.handlers.get("join-room")!({ liveSessionId: "ls_1", room: "shared" }, ack);
 
     expect(ack).toHaveBeenCalledWith(false, undefined, "not authorized for this room");
+  });
+
+  // The shared room is the lesson, and its audio sub-room is a live mic in it.
+  // A parent belongs to the classroom (visibleClassroomWhere admits them, which
+  // is why they can read the session *page*) but has no StudentProfile, so the
+  // membership lookup finds nothing and the join is refused. Pinning it here
+  // makes the refusal a decision rather than a side effect of how the query
+  // happens to be written — the page mirrors this rule via `canJoinBoard`.
+  it("denies a parent from the shared room even in their child's classroom", async () => {
+    liveSessionFindFirst.mockResolvedValue({ classroomId: "classroom_1" });
+    classroomStudentFindFirst.mockResolvedValue(null);
+    const { socket } = setup(parentData);
+
+    const ack = vi.fn();
+    await socket.handlers.get("join-room")!({ liveSessionId: "ls_1", room: "shared" }, ack);
+
+    expect(ack).toHaveBeenCalledWith(false, undefined, "not authorized for this room");
+    expect(socket.rooms.has("session:ls_1")).toBe(false);
+  });
+
+  it("denies an academy admin from the shared room", async () => {
+    liveSessionFindFirst.mockResolvedValue({ classroomId: "classroom_1" });
+    classroomStudentFindFirst.mockResolvedValue(null);
+    const { socket } = setup(adminData);
+
+    const ack = vi.fn();
+    await socket.handlers.get("join-room")!({ liveSessionId: "ls_1", room: "shared" }, ack);
+
+    expect(ack).toHaveBeenCalledWith(false, undefined, "not authorized for this room");
+  });
+
+  it("denies a parent the coach-only room", async () => {
+    liveSessionFindFirst.mockResolvedValue({ classroomId: "classroom_1" });
+    const { socket } = setup(parentData);
+
+    const ack = vi.fn();
+    await socket.handlers.get("join-room")!({ liveSessionId: "ls_1", room: "coach" }, ack);
+
+    expect(ack).toHaveBeenCalledWith(false, undefined, "not authorized for this room");
+    expect(classroomCoachFindFirst).not.toHaveBeenCalled();
   });
 
   it("rejects a malformed join payload without touching the database", async () => {
