@@ -9,11 +9,12 @@ import {
   listStudentsForParent,
 } from "../../../repositories/userRepository";
 import {
-  getStudentPuzzleStatuses,
+  getStudentSolvedPuzzleIds,
   listAssignmentsForStudent,
 } from "../../../repositories/assignmentRepository";
 import { getStudentAttendanceSummary } from "../../../repositories/attendanceRepository";
 import { formatAttendanceRate } from "../../../lib/attendance";
+import { displayName } from "../../../lib/displayName";
 import { Card } from "../../../components/ui/Card";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { RankProgressBar } from "../../../components/ui/RankProgressBar";
@@ -29,7 +30,23 @@ type UpcomingSession = Awaited<
 >[number];
 
 function greeting(session: CurrentSession) {
-  return session.email.split("@")[0] || session.email;
+  return displayName(session.email);
+}
+
+/**
+ * How many of an assignment's puzzles this student has solved.
+ *
+ * Intersects against the assignment's *current* puzzles rather than counting
+ * attempt rows: a puzzle dropped from an assignment after being solved leaves
+ * its PuzzleAttempt behind, and a raw count would render as "3/2".
+ */
+function solvedCount(
+  assignment: { id: string; puzzles: { puzzleId: string }[] },
+  solvedByAssignment: Map<string, Set<string>>
+): number {
+  const solvedIds = solvedByAssignment.get(assignment.id);
+  if (!solvedIds) return 0;
+  return assignment.puzzles.filter((p) => solvedIds.has(p.puzzleId)).length;
 }
 
 function SessionList({
@@ -99,19 +116,18 @@ export default async function DashboardHomePage() {
       : [];
 
     // listAssignmentsForStudent already sorts by dueAtUtc ascending.
-    const withProgress = studentProfile
-      ? await Promise.all(
-          assignments.map(async (assignment) => {
-            const statuses = await getStudentPuzzleStatuses(
-              session.tenantId,
-              assignment.id,
-              studentProfile.id
-            );
-            const solved = Array.from(statuses.values()).filter((s) => s === "solved").length;
-            return { assignment, solved };
-          })
+    // One query for the whole list, not one per assignment.
+    const solvedByAssignment = studentProfile
+      ? await getStudentSolvedPuzzleIds(
+          session.tenantId,
+          studentProfile.id,
+          assignments.map((a) => a.id)
         )
-      : [];
+      : new Map<string, Set<string>>();
+    const withProgress = assignments.map((assignment) => ({
+      assignment,
+      solved: solvedCount(assignment, solvedByAssignment),
+    }));
 
     const myClassrooms = await listClassroomsForViewer(session);
     const sessions = await listUpcomingSessionsForClassrooms(
@@ -197,22 +213,24 @@ export default async function DashboardHomePage() {
     const children = await Promise.all(
       links.map(async (link) => {
         const assignments = await listAssignmentsForStudent(session.tenantId, link.studentId);
-        const done = await Promise.all(
-          assignments.slice(0, ASSIGNMENT_PREVIEW_LIMIT).map(async (assignment) => {
-            const statuses = await getStudentPuzzleStatuses(
-              session.tenantId,
-              assignment.id,
-              link.studentId
-            );
-            const solved = Array.from(statuses.values()).filter((s) => s === "solved").length;
-            return solved === assignment.puzzles.length && assignment.puzzles.length > 0;
-          })
+        const preview = assignments.slice(0, ASSIGNMENT_PREVIEW_LIMIT);
+        // One query per child rather than one per assignment per child.
+        const solvedByAssignment = await getStudentSolvedPuzzleIds(
+          session.tenantId,
+          link.studentId,
+          preview.map((a) => a.id)
         );
+        const completedCount = preview.filter(
+          (assignment) =>
+            assignment.puzzles.length > 0 &&
+            solvedCount(assignment, solvedByAssignment) === assignment.puzzles.length
+        ).length;
         const attendance = await getStudentAttendanceSummary(session.tenantId, link.studentId);
         return {
-          name: link.student.user.email.split("@")[0] || link.student.user.email,
+          studentId: link.studentId,
+          name: displayName(link.student.user.email),
           assignmentCount: assignments.length,
-          completedCount: done.filter(Boolean).length,
+          completedCount,
           attendance,
         };
       })
@@ -234,7 +252,7 @@ export default async function DashboardHomePage() {
             <ul className="mt-3 space-y-2">
               {children.map((child) => (
                 <Card
-                  key={child.name}
+                  key={child.studentId}
                   className="flex flex-wrap items-center justify-between gap-3 p-4"
                 >
                   <span className="font-medium text-ink">{child.name}</span>

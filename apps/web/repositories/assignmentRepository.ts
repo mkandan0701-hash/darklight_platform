@@ -160,6 +160,54 @@ export async function getStudentPuzzleStatuses(
   return statuses;
 }
 
+/**
+ * Solved puzzle ids for one student across many assignments, in a single query.
+ *
+ * `getStudentPuzzleStatuses` answers the same question for *one* assignment, so
+ * any page listing N assignments with progress ran N queries. The dashboard
+ * capped that at five by only previewing five; the parent portal shows a
+ * child's whole homework list, where the cap would be the wrong fix.
+ *
+ * Returns ids rather than a count deliberately. A puzzle removed from an
+ * assignment after a student solved it leaves the `PuzzleAttempt` behind while
+ * the `AssignmentPuzzle` goes, so a raw count can exceed
+ * `assignment.puzzles.length` — `RankProgressBar` clamps its bar but prints the
+ * raw numbers, and a parent would read "3/2". Intersecting against the
+ * assignment's current puzzles is what the student's own assignment page
+ * already does.
+ *
+ * Tenant-scoped but not viewer-scoped: callers must already have established
+ * that they may read this student (see `getChildForParent`), the same contract
+ * as `getAssignment` above.
+ */
+export async function getStudentSolvedPuzzleIds(
+  tenantId: string,
+  studentProfileId: string,
+  assignmentIds: string[]
+): Promise<Map<string, Set<string>>> {
+  const solved = new Map<string, Set<string>>();
+  // Prisma would turn an empty `in` into a query that cannot match anything.
+  if (assignmentIds.length === 0) return solved;
+
+  const correctAttempts = await prisma.puzzleAttempt.findMany({
+    where: {
+      tenantId,
+      studentId: studentProfileId,
+      assignmentId: { in: assignmentIds },
+      isCorrect: true,
+    },
+    distinct: ["assignmentId", "puzzleId"],
+    select: { assignmentId: true, puzzleId: true },
+  });
+
+  for (const attempt of correctAttempts) {
+    const forAssignment = solved.get(attempt.assignmentId) ?? new Set<string>();
+    forAssignment.add(attempt.puzzleId);
+    solved.set(attempt.assignmentId, forAssignment);
+  }
+  return solved;
+}
+
 // Called on every submitted move, not just the final/correct one — logging
 // every attempt (right or wrong) is a stated product differentiator.
 export async function recordPuzzleAttempt(
