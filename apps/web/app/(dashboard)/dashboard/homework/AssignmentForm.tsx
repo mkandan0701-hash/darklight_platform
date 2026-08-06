@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { Chessboard } from "react-chessboard";
+import { StaticBoard } from "../../../../components/chess/StaticBoard";
 import { createAssignmentAction } from "./actions";
 import { Field, fieldInputClass } from "../../../../components/ui/Field";
 import { Button } from "../../../../components/ui/Button";
@@ -77,8 +77,12 @@ export function AssignmentForm({
             className="w-40 cursor-pointer rounded-lg border border-transparent p-2 text-xs has-[:checked]:border-board has-[:checked]:bg-board-light"
           >
             <input type="checkbox" name="puzzleIds" value={puzzle.id} className="mb-1" />
+            {/* StaticBoard, not Chessboard: this list is only rating-filtered,
+                so it can run to hundreds of positions, and every one of them
+                was already non-interactive. That was hundreds of react-dnd
+                provider trees mounting to draw pictures. */}
             <div style={{ width: 152 }}>
-              <Chessboard position={puzzle.fen} arePiecesDraggable={false} boardWidth={152} />
+              <StaticBoard fen={puzzle.fen} />
             </div>
             <p className="mt-1 font-mono text-slate">
               {puzzle.rating ?? "—"} · {puzzle.source === "UPLOAD" ? "your upload" : "Lichess"}

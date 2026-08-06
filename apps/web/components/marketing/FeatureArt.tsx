@@ -7,14 +7,18 @@
 // apps/web/public/ and replace that component's body with
 // <Image src="/your-file.png" alt="…" width={400} height={300} />.
 
-const INK = "#1B2430";
-const BOARD = "#1F6D4C";
-const BOARD_LIGHT = "#E8F2EC";
-const GOLD = "#C9A227";
-const GOLD_LIGHT = "#F6ECC9";
-const SLATE_LIGHT = "#E4E2DA";
-const PARCHMENT = "#F7F5EF";
-const BRICK = "#B3402F";
+// Moved to components/art/palette.ts once the dashboard art, the static board
+// and the piece avatars needed the same hex values.
+import {
+  BOARD,
+  BOARD_LIGHT,
+  BRICK,
+  GOLD,
+  GOLD_LIGHT,
+  INK,
+  PARCHMENT,
+  SLATE_LIGHT,
+} from "../art/palette";
 
 function Frame({ children, label }: { children: React.ReactNode; label: string }) {
   return (
