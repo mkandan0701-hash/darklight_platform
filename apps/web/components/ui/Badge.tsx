@@ -9,6 +9,9 @@ const TONE_CLASSES = {
   success: "bg-board-light text-board-dark",
   warn: "bg-gold-light text-ink",
   danger: "bg-brick-light text-brick",
+  // Greyer than neutral, for something inactive rather than merely unremarkable
+  // — the audio chip of a peer still connecting.
+  muted: "bg-slate-light text-slate",
   // Filled rather than tinted: for the one badge on a row that should read as
   // a state, not a label — a session that is live right now.
   solid: "bg-board text-white",

@@ -11,6 +11,7 @@ import { getAttendanceForSession } from "../../../../../repositories/attendanceR
 import { Card } from "../../../../../components/ui/Card";
 import { EmptyState } from "../../../../../components/ui/EmptyState";
 import { RankProgressBar } from "../../../../../components/ui/RankProgressBar";
+import { Badge } from "../../../../../components/ui/Badge";
 import {
   pageHeadingClass,
   sectionHeadingClass,
@@ -132,13 +133,9 @@ export default async function ClassroomAttendancePage({
                   {/* The viewer's own zone, never the scheduler's. */}
                   {formatInZone(liveSession.scheduledAtUtc, session.timezone)}
                 </Link>
-                <span
-                  className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                    count > 0 ? "bg-board-light text-board-dark" : "bg-parchment text-slate"
-                  }`}
-                >
+                <Badge tone={count > 0 ? "success" : "neutral"}>
                   {count > 0 ? `${count} marked` : "Not marked"}
-                </span>
+                </Badge>
               </Card>
             ))}
           </ul>

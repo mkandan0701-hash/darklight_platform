@@ -9,6 +9,7 @@ import {
   getStudentPuzzleStatuses,
 } from "../../../../../repositories/assignmentRepository";
 import { RankProgressBar } from "../../../../../components/ui/RankProgressBar";
+import { Badge, type BadgeTone } from "../../../../../components/ui/Badge";
 import {
   pageHeadingClass,
   tableWrapperClass,
@@ -101,10 +102,10 @@ export default async function AssignmentDetailPage({
     (p) => (statuses.get(p.puzzleId) ?? "unattempted") === "solved"
   ).length;
 
-  const STATUS_BADGE_CLASS: Record<"solved" | "attempted" | "unattempted", string> = {
-    solved: "bg-board-light text-board-dark",
-    attempted: "bg-gold-light text-ink",
-    unattempted: "bg-parchment text-slate",
+  const STATUS_BADGE_TONE: Record<"solved" | "attempted" | "unattempted", BadgeTone> = {
+    solved: "success",
+    attempted: "warn",
+    unattempted: "neutral",
   };
 
   return (
@@ -130,9 +131,7 @@ export default async function AssignmentDetailPage({
               >
                 Puzzle {assignmentPuzzle.puzzle.rating ? `(rated ${assignmentPuzzle.puzzle.rating})` : ""}
               </Link>
-              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_BADGE_CLASS[status]}`}>
-                {STATUS_LABEL[status]}
-              </span>
+              <Badge tone={STATUS_BADGE_TONE[status]}>{STATUS_LABEL[status]}</Badge>
             </li>
           );
         })}

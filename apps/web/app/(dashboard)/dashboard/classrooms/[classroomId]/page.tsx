@@ -11,6 +11,7 @@ import { RosterForms } from "./RosterForms";
 import { ScheduleSessionForm } from "./ScheduleSessionForm";
 import { Card } from "../../../../../components/ui/Card";
 import { EmptyState } from "../../../../../components/ui/EmptyState";
+import { Badge } from "../../../../../components/ui/Badge";
 import {
   pageHeadingClass,
   sectionHeadingClass,
@@ -108,9 +109,7 @@ export default async function ClassroomDetailPage({
                   </Link>
                   <div className="flex items-center gap-3">
                     {status === "LIVE" && (
-                      <span className="rounded bg-board px-2 py-0.5 text-xs font-medium text-white">
-                        {sessionStatusLabel(status)}
-                      </span>
+                      <Badge tone="solid">{sessionStatusLabel(status)}</Badge>
                     )}
                     <span className="font-mono text-xs text-slate">
                       {liveSession.durationMins} min

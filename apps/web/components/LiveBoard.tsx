@@ -10,6 +10,7 @@ import { tryMove } from "../lib/chess/tryMove";
 import { formatTimeInZone } from "../lib/time";
 import { useAudioMesh } from "../lib/audio/useAudioMesh";
 import { Button } from "./ui/Button";
+import { Badge } from "./ui/Badge";
 import { fieldInputClass } from "./ui/Field";
 import { sectionHeadingClass } from "./ui/styles";
 import type { Role } from "@chessplay-clone/shared";
@@ -250,16 +251,11 @@ export function LiveBoard({
         {audio.participants.length > 0 && (
           <ul className="flex flex-wrap gap-2">
             {audio.participants.map((participant) => (
-              <li
-                key={participant.peerId}
-                className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                  participant.connected
-                    ? "bg-board-light text-board"
-                    : "bg-slate-light text-slate"
-                }`}
-              >
-                {participant.name}
-                {!participant.connected && " (connecting…)"}
+              <li key={participant.peerId}>
+                <Badge tone={participant.connected ? "success" : "muted"}>
+                  {participant.name}
+                  {!participant.connected && " (connecting…)"}
+                </Badge>
               </li>
             ))}
           </ul>
