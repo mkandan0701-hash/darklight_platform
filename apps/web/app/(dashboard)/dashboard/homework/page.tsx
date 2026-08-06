@@ -70,12 +70,30 @@ export default async function HomeworkPage({
 
   if (!canAssign) {
     // PARENT (or any future role without a homework view) gets an explicit
-    // empty state, not an unhandled branch.
+    // empty state, not an unhandled branch. A parent's homework is per-child
+    // and lives on the portal page, so point them at it rather than leaving
+    // them on a page that will never fill up — this route is off their nav and
+    // only reachable by URL now, but the copy still shouldn't mislead.
+    const isParent = session.role === "PARENT";
     return (
       <div>
         <h1 className={pageHeadingClass}>Homework</h1>
         <div className="mt-6">
-          <EmptyState title="Nothing to show here yet" description="Homework assignments will appear here once your coach sets them up." />
+          <EmptyState
+            title={isParent ? "Homework is shown per child" : "Nothing to show here yet"}
+            description={
+              isParent
+                ? "Open a child from your dashboard to see their assignments and how far through each one they are."
+                : "Homework assignments will appear here once your coach sets them up."
+            }
+            action={
+              isParent ? (
+                <Link href="/dashboard" className={textLinkClass}>
+                  Go to your children
+                </Link>
+              ) : undefined
+            }
+          />
         </div>
       </div>
     );

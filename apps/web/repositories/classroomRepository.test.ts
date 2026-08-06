@@ -25,6 +25,7 @@ const {
   getClassroomForViewer,
   assignCoach,
   enrollStudent,
+  listClassroomsForStudent,
 } = await import("./classroomRepository");
 
 const viewer = (role: string) => ({ tenantId: "tenant_1", id: "user_1", role: role as never });
@@ -234,5 +235,29 @@ describe("enrollStudent", () => {
     expect(classroomStudentCreate).toHaveBeenCalledWith({
       data: { tenantId: "tenant_1", classroomId: "c_1", studentId: "stu_1" },
     });
+  });
+});
+
+// Not expressible through listClassroomsForViewer: a PARENT viewer returns the
+// union across all their children, so a room it yields can't be attributed to
+// the one child whose page is being rendered.
+describe("listClassroomsForStudent", () => {
+  it("scopes by tenant and this student's enrolment, excluding retired rooms", async () => {
+    await listClassroomsForStudent("tenant_1", "stu_1");
+    expect(whereOf(findMany)).toEqual({
+      tenantId: "tenant_1",
+      deletedAt: null,
+      students: { some: { studentId: "stu_1" } },
+    });
+  });
+
+  // Pinning the deliberate asymmetry: this takes a studentId the caller has
+  // already earned the right to (getChildForParent), so layering the viewer
+  // filter on top would only add a weaker duplicate check.
+  it("applies no viewer membership filter of its own", async () => {
+    await listClassroomsForStudent("tenant_1", "stu_1");
+    const where = whereOf(findMany);
+    expect(where).not.toHaveProperty("coaches");
+    expect(where).not.toHaveProperty("parents");
   });
 });

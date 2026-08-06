@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   attendanceRate,
   countAttendance,
+  eligibleSessions,
   formatAttendanceRate,
   resolveStatus,
 } from "./attendance";
@@ -109,5 +110,57 @@ describe("countAttendance", () => {
         presentSessionIds: new Set(),
       })
     ).toEqual({ attendedCount: 0, sessionCount: 3 });
+  });
+});
+
+// countAttendance is now derived from this, so the six cases above double as
+// its regression guard. These cover only what the rows add: the present flag,
+// and the ordering the parent-facing table reads down.
+describe("eligibleSessions", () => {
+  const sessions = [
+    { liveSessionId: "jan", scheduledAtUtc: JAN },
+    { liveSessionId: "mar", scheduledAtUtc: MAR },
+    { liveSessionId: "feb", scheduledAtUtc: FEB },
+  ];
+
+  it("returns newest first", () => {
+    const rows = eligibleSessions({
+      enrolledAt: JAN,
+      markedSessions: sessions,
+      presentSessionIds: new Set(),
+    });
+    expect(rows.map((r) => r.liveSessionId)).toEqual(["mar", "feb", "jan"]);
+  });
+
+  it("drops sessions held before the student enrolled", () => {
+    const rows = eligibleSessions({
+      enrolledAt: FEB,
+      markedSessions: sessions,
+      presentSessionIds: new Set(),
+    });
+    expect(rows.map((r) => r.liveSessionId)).toEqual(["mar", "feb"]);
+  });
+
+  it("flags presence from the id set", () => {
+    const rows = eligibleSessions({
+      enrolledAt: JAN,
+      markedSessions: sessions,
+      presentSessionIds: new Set(["mar"]),
+    });
+    expect(rows.find((r) => r.liveSessionId === "mar")!.present).toBe(true);
+    expect(rows.find((r) => r.liveSessionId === "jan")!.present).toBe(false);
+  });
+
+  // The invariant that keeps the summary card honest against the table.
+  it("counts to exactly what countAttendance reports", () => {
+    const params = {
+      enrolledAt: FEB,
+      markedSessions: sessions,
+      presentSessionIds: new Set(["mar"]),
+    };
+    const rows = eligibleSessions(params);
+    const counts = countAttendance(params);
+    expect(rows.length).toBe(counts.sessionCount);
+    expect(rows.filter((r) => r.present).length).toBe(counts.attendedCount);
   });
 });

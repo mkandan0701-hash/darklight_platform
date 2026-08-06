@@ -89,6 +89,28 @@ export async function listClassroomsForViewer(viewer: ClassroomViewer) {
   });
 }
 
+/**
+ * The classrooms one specific student is enrolled in.
+ *
+ * Not expressible as listClassroomsForViewer: for a PARENT that returns the
+ * union across every child, so a room it yields can't be attributed to the one
+ * whose page is being rendered. Two children in different classes would each
+ * appear to be in both.
+ *
+ * Tenant-scoped but NOT viewer-scoped — the caller must already have
+ * established its right to this student (see getChildForParent).
+ */
+export async function listClassroomsForStudent(tenantId: string, studentProfileId: string) {
+  return prisma.classroom.findMany({
+    where: {
+      tenantId,
+      deletedAt: null,
+      students: { some: { studentId: studentProfileId } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
 // Tenant-scoped but NOT membership-scoped: for callers that have already
 // established the actor's right to this specific classroom by another route
 // (a role gate plus isCoachAssignedToClassroom, or a roster check of their

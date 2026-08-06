@@ -168,3 +168,35 @@ export async function listStudentsForParent(tenantId: string, parentProfileId: s
     include: { student: { include: { user: true } } },
   });
 }
+
+/**
+ * The gate for every parent-facing page about one child.
+ *
+ * Returns the child only if a *live* ParentStudent link joins them to this
+ * viewer. Unlinking is a soft delete (see unlinkParentFromStudent), so without
+ * `deletedAt: null` a parent whose link an admin revoked would keep reading
+ * that child's attendance and homework indefinitely — the tenant guard in
+ * packages/db cannot catch this, because both people are in the same academy.
+ * The same filter appears in listStudentsForParent above and in
+ * membershipWhere's PARENT branch; this is the third place it has to hold.
+ *
+ * Returns null rather than throwing, so a child who isn't theirs is
+ * indistinguishable from one that doesn't exist and the page's notFound()
+ * confirms nothing. Same contract as getClassroomForViewer.
+ *
+ * Takes only what it reads: role plays no part here — safety comes from
+ * matching parent.userId — so accepting a full viewer would imply otherwise.
+ */
+export async function getChildForParent(
+  viewer: { tenantId: string; id: string },
+  studentProfileId: string
+) {
+  return prisma.studentProfile.findFirst({
+    where: {
+      id: studentProfileId,
+      tenantId: viewer.tenantId,
+      parents: { some: { parent: { userId: viewer.id }, deletedAt: null } },
+    },
+    include: { user: true },
+  });
+}

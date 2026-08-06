@@ -18,16 +18,14 @@ import { displayName } from "../../../lib/displayName";
 import { Card } from "../../../components/ui/Card";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { RankProgressBar } from "../../../components/ui/RankProgressBar";
+import { ChildSummaryCard } from "../../../components/dashboard/ChildSummaryCard";
+import { SessionList } from "../../../components/dashboard/SessionList";
 import { pageHeadingClass, sectionHeadingClass, textLinkClass } from "../../../components/ui/styles";
 
 // Bounds the per-assignment status queries on the student and parent views —
 // this is a landing page, not the homework list.
 const ASSIGNMENT_PREVIEW_LIMIT = 5;
 const SESSION_PREVIEW_LIMIT = 5;
-
-type UpcomingSession = Awaited<
-  ReturnType<typeof listUpcomingSessionsForClassrooms>
->[number];
 
 function greeting(session: CurrentSession) {
   return displayName(session.email);
@@ -47,42 +45,6 @@ function solvedCount(
   const solvedIds = solvedByAssignment.get(assignment.id);
   if (!solvedIds) return 0;
   return assignment.puzzles.filter((p) => solvedIds.has(p.puzzleId)).length;
-}
-
-function SessionList({
-  sessions,
-  timezone,
-  emptyDescription,
-}: {
-  sessions: UpcomingSession[];
-  timezone: string;
-  emptyDescription: string;
-}) {
-  if (sessions.length === 0) {
-    return (
-      <div className="mt-3">
-        <EmptyState title="No sessions scheduled" description={emptyDescription} />
-      </div>
-    );
-  }
-  return (
-    <ul className="mt-3 space-y-2">
-      {sessions.map((liveSession) => (
-        <Card key={liveSession.id} className="flex items-center justify-between gap-4 p-4">
-          <Link
-            href={`/dashboard/classrooms/${liveSession.classroomId}/sessions/${liveSession.id}`}
-            className={textLinkClass}
-          >
-            {/* Always the viewer's zone, never the scheduler's (claude.md §3.5). */}
-            {formatInZone(liveSession.scheduledAtUtc, timezone)}
-          </Link>
-          <span className="text-xs text-slate">
-            {liveSession.classroom.name} · {liveSession.durationMins} min
-          </span>
-        </Card>
-      ))}
-    </ul>
-  );
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
@@ -251,41 +213,17 @@ export default async function DashboardHomePage() {
           ) : (
             <ul className="mt-3 space-y-2">
               {children.map((child) => (
-                <Card
+                <ChildSummaryCard
                   key={child.studentId}
-                  className="flex flex-wrap items-center justify-between gap-3 p-4"
-                >
-                  <span className="font-medium text-ink">{child.name}</span>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <RankProgressBar
-                      completed={child.attendance.attendedCount}
-                      total={child.attendance.sessionCount}
-                      label={`${child.name} attended ${child.attendance.attendedCount} of ${child.attendance.sessionCount} sessions`}
-                    />
-                    <span className="text-xs text-slate">
-                      {child.attendance.sessionCount === 0
-                        ? "no attendance marked yet"
-                        : `${formatAttendanceRate(
-                            child.attendance.attendedCount,
-                            child.attendance.sessionCount
-                          )} attendance`}
-                    </span>
-                    <span className="text-xs text-slate">
-                      {child.assignmentCount === 0
-                        ? "no homework yet"
-                        : `${child.completedCount} of ${Math.min(
-                            child.assignmentCount,
-                            ASSIGNMENT_PREVIEW_LIMIT
-                          )} recent assignments complete`}
-                    </span>
-                  </div>
-                </Card>
+                  studentId={child.studentId}
+                  name={child.name}
+                  attendance={child.attendance}
+                  homeworkDone={child.completedCount}
+                  homeworkTotal={Math.min(child.assignmentCount, ASSIGNMENT_PREVIEW_LIMIT)}
+                />
               ))}
             </ul>
           )}
-          <p className="mt-3 text-xs text-slate">
-            Detailed progress and invoices arrive with the parent portal.
-          </p>
         </section>
       </div>
     );

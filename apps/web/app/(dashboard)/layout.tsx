@@ -79,13 +79,31 @@ export default async function DashboardLayout({
     }
   })();
 
+  // A parent reads about their child; they don't do homework or play the
+  // engine. Their per-child homework lives on the portal page, and /dashboard
+  // /homework has nothing for them. Note this hides links, it does not gate
+  // routes: /play and /analysis stay reachable by URL and render no tenant
+  // data, so there is nothing there to authorize.
+  const isParent = (() => {
+    try {
+      requireRole(session, ["PARENT"]);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
   const links = [
     { href: "/dashboard", label: "Dashboard" },
     { href: "/dashboard/classrooms", label: "Classrooms" },
-    { href: "/dashboard/homework", label: "Homework" },
+    ...(isParent ? [] : [{ href: "/dashboard/homework", label: "Homework" }]),
     ...(canMarkAttendance ? [{ href: "/dashboard/attendance", label: "Attendance" }] : []),
-    { href: "/dashboard/play", label: "Play" },
-    { href: "/dashboard/analysis", label: "Analysis" },
+    ...(isParent
+      ? []
+      : [
+          { href: "/dashboard/play", label: "Play" },
+          { href: "/dashboard/analysis", label: "Analysis" },
+        ]),
     ...(canManagePuzzles ? [{ href: "/dashboard/puzzles", label: "Puzzles" }] : []),
     ...(isAdmin ? [{ href: "/dashboard/members", label: "Members" }] : []),
     ...(isAdmin ? [{ href: "/dashboard/settings", label: "Settings" }] : []),

@@ -30,6 +30,7 @@ const {
   unlinkParentFromStudent,
   listStudentsForParent,
   listParentStudentLinks,
+  getChildForParent,
 } = await import("./userRepository");
 
 const LINK = { tenantId: "tenant_1", parentProfileId: "parent_1", studentProfileId: "student_1" };
@@ -173,5 +174,52 @@ describe("linkParentToStudent tenant ownership", () => {
       /does not belong to this academy/
     );
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+// The gate every parent-facing per-child page sits behind. The tenant guard in
+// packages/db cannot help here: a parent and somebody else's child are in the
+// same academy, so the leak this would cause is entirely within one tenant.
+describe("getChildForParent", () => {
+  const viewer = { tenantId: "tenant_1", id: "user_parent_1" };
+
+  function whereOf() {
+    const [args] = studentProfileFindFirst.mock.calls[0] as [{ where: Record<string, any> }];
+    return args.where;
+  }
+
+  it("scopes by the requested student and the viewer's tenant", async () => {
+    await getChildForParent(viewer, "student_1");
+    expect(whereOf()).toMatchObject({ id: "student_1", tenantId: "tenant_1" });
+  });
+
+  // Regression guard. Unlinking is a soft delete, so a link filter without
+  // `deletedAt: null` keeps a revoked parent reading their ex-child's
+  // attendance and homework forever. listStudentsForParent and
+  // membershipWhere's PARENT branch both carry it; this is the third place it
+  // has to hold, and the one an earlier draft of this feature got wrong.
+  it("requires the parent link to be live, not soft-deleted", async () => {
+    await getChildForParent(viewer, "student_1");
+    expect(whereOf().parents).toEqual({
+      some: { parent: { userId: "user_parent_1" }, deletedAt: null },
+    });
+  });
+
+  // The viewer carries a User.id; ParentStudent joins through ParentProfile.
+  // Matching on parent.userId is what keeps those two from being confused.
+  it("matches the parent by their user id, not a ParentProfile id", async () => {
+    await getChildForParent(viewer, "student_1");
+    expect(whereOf().parents.some.parent).toEqual({ userId: "user_parent_1" });
+  });
+
+  it("returns null rather than throwing for a child that isn't theirs", async () => {
+    studentProfileFindFirst.mockResolvedValue(null);
+    await expect(getChildForParent(viewer, "someone_elses_child")).resolves.toBeNull();
+  });
+
+  it("includes the user row the page names the child from", async () => {
+    await getChildForParent(viewer, "student_1");
+    const [args] = studentProfileFindFirst.mock.calls[0] as [{ include: Record<string, any> }];
+    expect(args.include).toEqual({ user: true });
   });
 });

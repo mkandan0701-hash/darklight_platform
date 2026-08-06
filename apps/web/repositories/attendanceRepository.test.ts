@@ -33,6 +33,7 @@ const {
   getAttendanceForSession,
   getClassroomAttendanceReport,
   getStudentAttendanceSummary,
+  getStudentAttendanceDetail,
 } = await import("./attendanceRepository");
 
 const JAN = new Date("2026-01-10T10:00:00.000Z");
@@ -249,5 +250,145 @@ describe("getStudentAttendanceSummary", () => {
       attendedCount: 2,
       sessionCount: 2,
     });
+  });
+});
+
+// The parent-facing table. Its rows and getStudentAttendanceSummary's two
+// integers are the same facts at two zoom levels, so the tests that matter are
+// the ones proving they can't tell a parent different stories.
+describe("getStudentAttendanceDetail", () => {
+  const MAR = new Date("2026-03-10T10:00:00.000Z");
+
+  function record(sessionId: string, classroomId: string, at: Date, studentId: string, present: boolean) {
+    return {
+      liveSessionId: sessionId,
+      studentId,
+      present,
+      liveSession: { scheduledAtUtc: at, classroomId },
+    };
+  }
+
+  it("returns nothing, and never queries records, for a student with no enrolments", async () => {
+    classroomStudentFindMany.mockResolvedValue([]);
+    expect(await getStudentAttendanceDetail("tenant_1", "stu_1", 20)).toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("scopes both queries by tenant", async () => {
+    classroomStudentFindMany.mockResolvedValue([
+      { classroomId: "c_1", enrolledAt: JAN, classroom: { name: "Sunday Squad" } },
+    ]);
+    findMany.mockResolvedValue([]);
+
+    await getStudentAttendanceDetail("tenant_1", "stu_1", 20);
+
+    expect(classroomStudentFindMany.mock.calls[0][0].where).toMatchObject({ tenantId: "tenant_1" });
+    expect(findMany.mock.calls[0][0].where).toMatchObject({ tenantId: "tenant_1" });
+  });
+
+  // A student who joined in February is not absent from January's classes.
+  it("judges each classroom against its own enrolment date", async () => {
+    classroomStudentFindMany.mockResolvedValue([
+      { classroomId: "c_1", enrolledAt: FEB, classroom: { name: "Sunday Squad" } },
+    ]);
+    findMany.mockResolvedValue([
+      record("ls_jan", "c_1", JAN, "stu_1", false),
+      record("ls_mar", "c_1", MAR, "stu_1", true),
+    ]);
+
+    const rows = await getStudentAttendanceDetail("tenant_1", "stu_1", 20);
+
+    expect(rows.map((r) => r.liveSessionId)).toEqual(["ls_mar"]);
+  });
+
+  // eligibleSessions sorts within one classroom, so a per-classroom sort alone
+  // passes a single-classroom fixture and quietly breaks here — `take` would
+  // keep the oldest rows of the first classroom rather than the newest overall.
+  it("orders newest first across two classrooms, not just within each", async () => {
+    classroomStudentFindMany.mockResolvedValue([
+      { classroomId: "c_1", enrolledAt: JAN, classroom: { name: "Sunday Squad" } },
+      { classroomId: "c_2", enrolledAt: JAN, classroom: { name: "Advanced" } },
+    ]);
+    findMany.mockResolvedValue([
+      record("ls_jan", "c_1", JAN, "stu_1", true),
+      record("ls_mar", "c_1", MAR, "stu_1", true),
+      record("ls_feb", "c_2", FEB, "stu_1", true),
+    ]);
+
+    const rows = await getStudentAttendanceDetail("tenant_1", "stu_1", 20);
+
+    expect(rows.map((r) => r.liveSessionId)).toEqual(["ls_mar", "ls_feb", "ls_jan"]);
+  });
+
+  it("keeps the most recent rows when take is smaller than the history", async () => {
+    classroomStudentFindMany.mockResolvedValue([
+      { classroomId: "c_1", enrolledAt: JAN, classroom: { name: "Sunday Squad" } },
+      { classroomId: "c_2", enrolledAt: JAN, classroom: { name: "Advanced" } },
+    ]);
+    findMany.mockResolvedValue([
+      record("ls_jan", "c_1", JAN, "stu_1", true),
+      record("ls_mar", "c_1", MAR, "stu_1", true),
+      record("ls_feb", "c_2", FEB, "stu_1", true),
+    ]);
+
+    const rows = await getStudentAttendanceDetail("tenant_1", "stu_1", 2);
+
+    expect(rows.map((r) => r.liveSessionId)).toEqual(["ls_mar", "ls_feb"]);
+  });
+
+  it("carries the classroom name so a row says which class it was", async () => {
+    classroomStudentFindMany.mockResolvedValue([
+      { classroomId: "c_1", enrolledAt: JAN, classroom: { name: "Sunday Squad" } },
+    ]);
+    findMany.mockResolvedValue([record("ls_1", "c_1", MAR, "stu_1", true)]);
+
+    const [row] = await getStudentAttendanceDetail("tenant_1", "stu_1", 20);
+
+    expect(row).toMatchObject({ classroomId: "c_1", classroomName: "Sunday Squad" });
+  });
+
+  // Both read `present: false`, and both count as a non-attendance, but only
+  // one of them means the coach wrote "absent" next to this child's name.
+  it("distinguishes a marked absence from a session this child was never recorded for", async () => {
+    classroomStudentFindMany.mockResolvedValue([
+      { classroomId: "c_1", enrolledAt: JAN, classroom: { name: "Sunday Squad" } },
+    ]);
+    findMany.mockResolvedValue([
+      // ls_absent: this child has a row saying absent.
+      record("ls_absent", "c_1", MAR, "stu_1", false),
+      // ls_other: the class was marked, but only for a classmate.
+      record("ls_other", "c_1", FEB, "stu_2", true),
+    ]);
+
+    const rows = await getStudentAttendanceDetail("tenant_1", "stu_1", 20);
+    const byId = new Map(rows.map((r) => [r.liveSessionId, r]));
+
+    expect(byId.get("ls_absent")).toMatchObject({ present: false, marked: true });
+    expect(byId.get("ls_other")).toMatchObject({ present: false, marked: false });
+  });
+
+  // The one that stops the summary card and the table under it disagreeing.
+  it("agrees with getStudentAttendanceSummary on the same data", async () => {
+    const enrolments = [
+      { classroomId: "c_1", enrolledAt: FEB, classroom: { name: "Sunday Squad" } },
+      { classroomId: "c_2", enrolledAt: JAN, classroom: { name: "Advanced" } },
+    ];
+    const records = [
+      record("ls_jan", "c_1", JAN, "stu_1", true), // before enrolment in c_1
+      record("ls_mar", "c_1", MAR, "stu_1", true),
+      record("ls_feb", "c_2", FEB, "stu_1", false),
+      record("ls_other", "c_2", MAR, "stu_2", true), // marked, but not for stu_1
+    ];
+
+    classroomStudentFindMany.mockResolvedValue(enrolments);
+    findMany.mockResolvedValue(records);
+    const detail = await getStudentAttendanceDetail("tenant_1", "stu_1", 100);
+
+    classroomStudentFindMany.mockResolvedValue(enrolments);
+    findMany.mockResolvedValue(records);
+    const summary = await getStudentAttendanceSummary("tenant_1", "stu_1");
+
+    expect(detail.length).toBe(summary.sessionCount);
+    expect(detail.filter((r) => r.present).length).toBe(summary.attendedCount);
   });
 });

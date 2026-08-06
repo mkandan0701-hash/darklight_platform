@@ -14,7 +14,11 @@
 import { prisma, prismaBase } from "@chessplay-clone/db";
 import type { Role } from "@chessplay-clone/shared";
 import { createSupabaseAdminClient } from "../lib/supabase/admin";
-import { createUserWithProfile, linkParentToStudent } from "../repositories/userRepository";
+import {
+  createUserWithProfile,
+  linkParentToStudent,
+  unlinkParentFromStudent,
+} from "../repositories/userRepository";
 import { createClassroom, assignCoach, enrollStudent } from "../repositories/classroomRepository";
 import { createAssignment } from "../repositories/assignmentRepository";
 import { createLiveSession } from "../repositories/liveSessionRepository";
@@ -157,6 +161,23 @@ async function main() {
   if (!otherClassroom) {
     otherClassroom = await createClassroom(tenant.id, OTHER_CLASSROOM);
     await enrollStudent(tenant.id, otherClassroom.id, otherStudentProfile.id);
+  }
+
+  // A *revoked* link from the demo parent to the other family's child: linked,
+  // then immediately unlinked, which soft-deletes the row rather than removing
+  // it. This is the only fixture that can prove getChildForParent's
+  // `deletedAt: null` filter is real — a child who was never linked 404s
+  // because no row exists at all, which passes even if the filter is missing.
+  const revoked = await prisma.parentStudent.findFirst({
+    where: { tenantId: tenant.id, parentId: parentProfile.id, studentId: otherStudentProfile.id },
+  });
+  if (!revoked) {
+    const link = await linkParentToStudent({
+      tenantId: tenant.id,
+      parentProfileId: parentProfile.id,
+      studentProfileId: otherStudentProfile.id,
+    });
+    await unlinkParentFromStudent({ tenantId: tenant.id, linkId: link.id });
   }
 
   // Two known-legal puzzles: a real mate-in-a-few (already exercised by

@@ -1,5 +1,5 @@
 import { prisma } from "@chessplay-clone/db";
-import { countAttendance, type MarkedSession } from "../lib/attendance";
+import { countAttendance, eligibleSessions, type MarkedSession } from "../lib/attendance";
 
 export type AttendanceMode = "ONLINE" | "OFFLINE";
 
@@ -173,6 +173,93 @@ export async function getStudentAttendanceSummary(
   return { attendedCount, sessionCount };
 }
 
+export type StudentAttendanceRow = {
+  liveSessionId: string;
+  classroomId: string;
+  classroomName: string;
+  scheduledAtUtc: Date;
+  present: boolean;
+  /**
+   * Whether *this student* has a record for this session, as opposed to the
+   * session merely having been marked for somebody. `present: false` covers
+   * both "marked absent" and "the coach never recorded this child", and
+   * countAttendance has always treated them identically — correctly, since
+   * neither is an attendance. But the two are not the same sentence to read,
+   * and telling a parent their child was absent when nobody wrote anything
+   * down is the most expensive thing this page can get wrong.
+   */
+  marked: boolean;
+};
+
+/**
+ * One student's attendance session by session, newest first.
+ *
+ * The summary getStudentAttendanceSummary returns is these rows counted, and
+ * both go through eligibleSessions, so the percentage on the card and the list
+ * beneath it cannot drift apart.
+ *
+ * Tenant-scoped but not viewer-scoped: the caller must already have
+ * established it may read this student — see getChildForParent.
+ */
+export async function getStudentAttendanceDetail(
+  tenantId: string,
+  studentProfileId: string,
+  take: number
+): Promise<StudentAttendanceRow[]> {
+  const enrollments = await prisma.classroomStudent.findMany({
+    where: { tenantId, studentId: studentProfileId },
+    select: {
+      classroomId: true,
+      enrolledAt: true,
+      classroom: { select: { name: true } },
+    },
+  });
+  if (enrollments.length === 0) return [];
+
+  const records = await prisma.attendanceRecord.findMany({
+    where: {
+      tenantId,
+      liveSession: { classroomId: { in: enrollments.map((e) => e.classroomId) } },
+    },
+    select: {
+      liveSessionId: true,
+      studentId: true,
+      present: true,
+      liveSession: { select: { scheduledAtUtc: true, classroomId: true } },
+    },
+  });
+
+  const rows: StudentAttendanceRow[] = [];
+  // Per classroom, against that classroom's own enrolment date — the same
+  // reason getStudentAttendanceSummary loops rather than folding once.
+  for (const enrollment of enrollments) {
+    const scoped = records.filter((r) => r.liveSession.classroomId === enrollment.classroomId);
+    const { markedSessions, presentByStudent, recordedByStudent } =
+      foldAttendanceRecords(scoped);
+    const recorded = recordedByStudent.get(studentProfileId) ?? new Set<string>();
+
+    for (const session of eligibleSessions({
+      enrolledAt: enrollment.enrolledAt,
+      markedSessions,
+      presentSessionIds: presentByStudent.get(studentProfileId) ?? new Set(),
+    })) {
+      rows.push({
+        liveSessionId: session.liveSessionId,
+        classroomId: enrollment.classroomId,
+        classroomName: enrollment.classroom.name,
+        scheduledAtUtc: session.scheduledAtUtc,
+        present: session.present,
+        marked: recorded.has(session.liveSessionId),
+      });
+    }
+  }
+
+  // eligibleSessions sorts within a classroom; a student in two classrooms
+  // needs the merged list re-sorted before `take` means "most recent".
+  rows.sort((a, b) => b.scheduledAtUtc.getTime() - a.scheduledAtUtc.getTime());
+  return rows.slice(0, take);
+}
+
 type RawRecord = {
   liveSessionId: string;
   studentId: string;
@@ -188,12 +275,21 @@ type RawRecord = {
 function foldAttendanceRecords(records: RawRecord[]) {
   const sessions = new Map<string, MarkedSession>();
   const presentByStudent = new Map<string, Set<string>>();
+  // Which sessions each student has a row for at all, present or absent. The
+  // counts never need this — an unrecorded student is absent for arithmetic —
+  // but getStudentAttendanceDetail has to say which of the two it was.
+  const recordedByStudent = new Map<string, Set<string>>();
 
   for (const record of records) {
     sessions.set(record.liveSessionId, {
       liveSessionId: record.liveSessionId,
       scheduledAtUtc: record.liveSession.scheduledAtUtc,
     });
+
+    const recorded = recordedByStudent.get(record.studentId) ?? new Set<string>();
+    recorded.add(record.liveSessionId);
+    recordedByStudent.set(record.studentId, recorded);
+
     if (record.present) {
       const seen = presentByStudent.get(record.studentId) ?? new Set<string>();
       seen.add(record.liveSessionId);
@@ -201,5 +297,5 @@ function foldAttendanceRecords(records: RawRecord[]) {
     }
   }
 
-  return { markedSessions: [...sessions.values()], presentByStudent };
+  return { markedSessions: [...sessions.values()], presentByStudent, recordedByStudent };
 }
