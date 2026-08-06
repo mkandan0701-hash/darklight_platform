@@ -21,6 +21,7 @@ const SignUpSchema = z.object({
     .refine((v) => !RESERVED_SUBDOMAINS.has(v), { message: "That subdomain is reserved" }),
   timezone: z.string().min(1, "Timezone is required"),
   adminEmail: z.string().email("Enter a valid email"),
+  adminName: z.string().max(80, "Name is too long").optional(),
   adminPassword: z.string().min(8, "Password must be at least 8 characters"),
 });
 
@@ -31,7 +32,8 @@ export async function signUpAcademy(
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
-  const { academyName, subdomain, timezone, adminEmail, adminPassword } = parsed.data;
+  const { academyName, subdomain, timezone, adminEmail, adminName, adminPassword } =
+    parsed.data;
 
   const existing = await prisma.tenant.findUnique({ where: { subdomain } });
   if (existing) {
@@ -55,6 +57,7 @@ export async function signUpAcademy(
     await createUserWithProfile({
       tenantId: tenant.id,
       email: adminEmail,
+      displayName: adminName,
       role: "ACADEMY_ADMIN",
       timezone,
       authProviderId: authUser.user.id,

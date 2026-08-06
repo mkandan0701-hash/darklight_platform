@@ -28,7 +28,7 @@ const ASSIGNMENT_PREVIEW_LIMIT = 5;
 const SESSION_PREVIEW_LIMIT = 5;
 
 function greeting(session: CurrentSession) {
-  return displayName(session.email);
+  return displayName(session);
 }
 
 /**
@@ -190,7 +190,7 @@ export default async function DashboardHomePage() {
         const attendance = await getStudentAttendanceSummary(session.tenantId, link.studentId);
         return {
           studentId: link.studentId,
-          name: displayName(link.student.user.email),
+          name: displayName(link.student.user),
           assignmentCount: assignments.length,
           completedCount,
           attendance,

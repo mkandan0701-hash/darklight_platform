@@ -19,6 +19,9 @@ export function InviteForm() {
 
   return (
     <form action={handleSubmit} className="flex flex-wrap items-end gap-3">
+      <Field label="Name" help="Optional — they can set their own later.">
+        <input name="displayName" className={fieldInputClass} />
+      </Field>
       <Field label="Email">
         <input name="email" type="email" required className={fieldInputClass} />
       </Field>

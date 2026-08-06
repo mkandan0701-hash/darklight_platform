@@ -107,6 +107,8 @@ export default async function DashboardLayout({
     ...(canManagePuzzles ? [{ href: "/dashboard/puzzles", label: "Puzzles" }] : []),
     ...(isAdmin ? [{ href: "/dashboard/members", label: "Members" }] : []),
     ...(isAdmin ? [{ href: "/dashboard/settings", label: "Settings" }] : []),
+    // Every role, including parents — it's their own name, not the academy's.
+    { href: "/dashboard/profile", label: "Profile" },
   ];
 
   return (

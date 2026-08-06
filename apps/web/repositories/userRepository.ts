@@ -2,18 +2,44 @@ import { prisma } from "@chessplay-clone/db";
 import type { Role } from "@chessplay-clone/shared";
 import { TenantMismatchError } from "../lib/auth/errors";
 
+/**
+ * Blank in, null out. A cleared profile field and a never-set one mean the
+ * same thing — fall back to the email local part — and storing "" for one of
+ * them would make `displayName()`'s emptiness check the only thing standing
+ * between a user and a nameless row.
+ */
+function normalizeDisplayName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+/** Self-serve: a user renaming themselves. Scoped so nobody can rename others. */
+export async function updateDisplayName(
+  tenantId: string,
+  userId: string,
+  value: string | null
+) {
+  return prisma.user.updateMany({
+    where: { tenantId, id: userId, deletedAt: null },
+    data: { displayName: normalizeDisplayName(value) },
+  });
+}
+
 export async function createUserWithProfile(input: {
   tenantId: string;
   email: string;
   role: Role;
   timezone: string;
   authProviderId: string;
+  /** Optional: an admin inviting someone may not know their name yet. */
+  displayName?: string | null;
 }) {
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
       data: {
         tenantId: input.tenantId,
         email: input.email,
+        displayName: normalizeDisplayName(input.displayName),
         role: input.role,
         timezone: input.timezone,
         authProviderId: input.authProviderId,

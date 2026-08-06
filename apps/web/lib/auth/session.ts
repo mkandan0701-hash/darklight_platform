@@ -10,6 +10,8 @@ export type CurrentSession = {
   tenantId: string;
   role: Role;
   email: string;
+  // Nullable by design — render it through displayName(), never directly.
+  displayName: string | null;
   timezone: string;
   // Invited users hold a valid session before they have a password of their
   // own. The dashboard layout uses this to send them to /set-password —
@@ -49,6 +51,7 @@ export const getCurrentSession = cache(async (): Promise<CurrentSession> => {
     tenantId: dbUser.tenantId,
     role: dbUser.role as Role,
     email: dbUser.email,
+    displayName: dbUser.displayName,
     timezone: dbUser.timezone,
     // Set on invite, cleared by setPassword(). getUser() re-reads this from
     // the Auth server on every request, so it can't go stale. Absent for

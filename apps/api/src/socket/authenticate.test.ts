@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { authenticateSocket, displayNameFromEmail } from "./authenticate";
+import { authenticateSocket, displayNameFromEmail, resolveDisplayName } from "./authenticate";
 
 const verifySupabaseJwt = vi.fn();
 const findAppUserByAuthId = vi.fn();
@@ -31,6 +31,39 @@ describe("displayNameFromEmail", () => {
 
   it("falls back to the whole string when there is no local part", () => {
     expect(displayNameFromEmail("@academy.test")).toBe("@academy.test");
+  });
+});
+
+// Chat and the audio roster have to agree with the rest of the app: a coach
+// who sets "Asha Rao" on their profile can't still be "asha.rao" in the
+// lesson. Mirrors apps/web/lib/displayName.ts.
+describe("resolveDisplayName", () => {
+  it("prefers the name the user set on their profile", () => {
+    expect(resolveDisplayName({ displayName: "Asha Rao", email: "asha.rao@academy.test" })).toBe(
+      "Asha Rao"
+    );
+  });
+
+  it("trims it", () => {
+    expect(resolveDisplayName({ displayName: "  Asha Rao ", email: "a@b.test" })).toBe("Asha Rao");
+  });
+
+  it("falls back to the local part when unset, null or blank", () => {
+    expect(resolveDisplayName({ email: "asha.rao@academy.test" })).toBe("asha.rao");
+    expect(resolveDisplayName({ displayName: null, email: "asha.rao@academy.test" })).toBe(
+      "asha.rao"
+    );
+    expect(resolveDisplayName({ displayName: "  ", email: "asha.rao@academy.test" })).toBe(
+      "asha.rao"
+    );
+  });
+
+  // The fallback exists to keep classmates' addresses off each other's
+  // screens; a set name must not become a way to put one back.
+  it("never broadcasts the full address when a name is set", () => {
+    expect(resolveDisplayName({ displayName: "Asha", email: "asha@academy.test" })).not.toContain(
+      "@"
+    );
   });
 });
 

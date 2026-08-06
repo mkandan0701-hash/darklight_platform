@@ -19,6 +19,10 @@ type ActionResult = { ok: true } | { ok: false; error: string };
 
 const InviteSchema = z.object({
   email: z.string().email("Enter a valid email"),
+  // Optional: an admin bulk-inviting a class may only have the addresses.
+  // The empty string a blank input submits is normalized to null in the
+  // repository, so it never reaches the column.
+  displayName: z.string().max(80, "Name is too long").optional(),
   role: RoleSchema,
   timezone: z.string().min(1, "Timezone is required"),
 });
@@ -79,6 +83,7 @@ export async function inviteMember(formData: FormData): Promise<ActionResult> {
     await createUserWithProfile({
       tenantId: session.tenantId,
       email: parsed.data.email,
+      displayName: parsed.data.displayName,
       role: parsed.data.role,
       timezone: parsed.data.timezone,
       authProviderId: data.user.id,
