@@ -47,10 +47,16 @@ enum PlanTier {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  tenantId       String
-  tenant         Tenant    @relation(fields: [tenantId], references: [id])
-  email          String
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  email    String
+  /// What people are called in the UI. Nullable because it can't be
+  /// backfilled: nothing collected a name before this column existed, and
+  /// inventing one from an email address is what `displayName()` already does
+  /// as a fallback. Every render goes through that helper, so a null here is
+  /// a display decision, not a missing value.
+  displayName    String?
   role           Role
   timezone       String
   authProviderId String    @unique

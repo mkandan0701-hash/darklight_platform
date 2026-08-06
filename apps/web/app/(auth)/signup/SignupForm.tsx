@@ -40,6 +40,9 @@ export function SignupForm() {
       <Field label="Timezone (IANA)" help="e.g. Asia/Kolkata, America/New_York">
         <input name="timezone" required defaultValue="Asia/Kolkata" className={fieldInputClass} />
       </Field>
+      <Field label="Your name" help="Optional — shown to your coaches, students and parents.">
+        <input name="adminName" className={fieldInputClass} />
+      </Field>
       <Field label="Admin email">
         <input name="adminEmail" type="email" required className={fieldInputClass} />
       </Field>

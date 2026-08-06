@@ -10,6 +10,7 @@ function sessionWithRole(role: CurrentSession["role"]): CurrentSession {
     tenantId: "tenant_1",
     role,
     email: "user@example.com",
+    displayName: null,
     timezone: "America/New_York",
     mustSetPassword: false,
   };

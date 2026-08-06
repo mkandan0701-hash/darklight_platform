@@ -66,7 +66,7 @@ export default async function ChildPage({ params }: { params: { studentId: strin
   const child = await getChildForParent(session, params.studentId);
   if (!child) notFound();
 
-  const name = displayName(child.user.email);
+  const name = displayName(child.user);
 
   const classrooms = await listClassroomsForStudent(session.tenantId, child.id);
   const sessions = await listUpcomingSessionsForClassrooms(

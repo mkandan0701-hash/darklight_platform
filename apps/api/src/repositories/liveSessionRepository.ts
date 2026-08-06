@@ -8,6 +8,7 @@ import { prisma } from "@chessplay-clone/db";
 export type AppUser = {
   id: string;
   email: string;
+  displayName: string | null;
   role: string;
 };
 
@@ -24,7 +25,7 @@ export async function findAppUserByAuthId(
 ): Promise<AppUser | null> {
   const user = await prisma.user.findFirst({
     where: { tenantId, authProviderId, deletedAt: null },
-    select: { id: true, email: true, role: true },
+    select: { id: true, email: true, displayName: true, role: true },
   });
   return user;
 }

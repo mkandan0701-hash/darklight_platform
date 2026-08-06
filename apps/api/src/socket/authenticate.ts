@@ -20,6 +20,24 @@ export function displayNameFromEmail(email: string): string {
   return local.length > 0 ? local : email;
 }
 
+/**
+ * What this person is called in chat and the audio roster.
+ *
+ * Prefers the name they set on their profile, falling back to the email local
+ * part — the same order apps/web/lib/displayName.ts uses, so a coach who
+ * renames themselves isn't "asha.rao" in the lesson and "Asha Rao" everywhere
+ * else. Still never the full address: the fallback exists to keep classmates'
+ * emails off each other's screens, and a set name must not reintroduce one.
+ */
+export function resolveDisplayName(user: {
+  displayName?: string | null;
+  email: string;
+}): string {
+  const set = user.displayName?.trim();
+  if (set) return set;
+  return displayNameFromEmail(user.email);
+}
+
 // Runs once per socket connection, before any handler is registered. Resolving
 // the User row here (rather than lazily per event) means a deleted account or a
 // token whose tenant claim doesn't match the row is refused at connect time.
@@ -44,6 +62,6 @@ export async function authenticateSocket(
     // happens to expire.
     session: { ...claims, role: appUser.role as Role },
     appUser: { id: appUser.id, email: appUser.email },
-    displayName: displayNameFromEmail(appUser.email),
+    displayName: resolveDisplayName(appUser),
   };
 }
