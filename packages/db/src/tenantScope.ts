@@ -150,7 +150,9 @@ export function tenantScopeExtension() {
             }
           }
 
-          if (operation === "createMany") {
+          // createManyAndReturn (Prisma 5.14+) takes the same payload; without
+          // it here a bulk insert that also returns rows skipped the guard.
+          if (operation === "createMany" || operation === "createManyAndReturn") {
             const items = Array.isArray(args?.data) ? args.data : [args?.data];
             for (const item of items) {
               const dataTenantId = extractDataTenantId(item);
