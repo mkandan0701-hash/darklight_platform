@@ -1,5 +1,5 @@
 import { getCurrentSession } from "../../../../lib/auth/session";
-import { requireRole } from "../../../../lib/auth/requireRole";
+import { requireRoleOrNotFound } from "../../../../lib/auth/requireRole";
 import { listUploadedPuzzles } from "../../../../repositories/puzzleRepository";
 import { PuzzleUploadForm } from "./PuzzleUploadForm";
 import { EmptyState } from "../../../../components/ui/EmptyState";
@@ -14,7 +14,7 @@ import {
 
 export default async function PuzzlesPage() {
   const session = await getCurrentSession();
-  requireRole(session, ["ACADEMY_ADMIN", "COACH"]);
+  requireRoleOrNotFound(session, ["ACADEMY_ADMIN", "COACH"]);
 
   const puzzles = await listUploadedPuzzles(session.tenantId);
 

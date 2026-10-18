@@ -129,6 +129,24 @@ describe("tenantScope: create/upsert coverage", () => {
     );
   });
 
+  it("checks every item in createManyAndReturn too", async () => {
+    const query = fakeQuery();
+    await runWithTenant(TENANT_A, () =>
+      expect(
+        handler()({
+          model: "LiveSession",
+          operation: "createManyAndReturn",
+          args: { data: [{ tenantId: TENANT_A }, { tenantId: TENANT_B }] },
+          query,
+        })
+      ).rejects.toThrow()
+    );
+    await expect(
+      handler()({ model: "LiveSession", operation: "createManyAndReturn", args: { data: [{}] }, query })
+    ).rejects.toThrow(/tenantId set on every item/);
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it("checks both upsert's where and create branches", async () => {
     const query = fakeQuery();
     await runWithTenant(TENANT_A, async () => {

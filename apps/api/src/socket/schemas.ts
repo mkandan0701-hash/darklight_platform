@@ -67,3 +67,30 @@ export const refBoardLoadSchema = z.object({
   // only bounds the string. A FEN is ~90 chars, so 200 is generous.
   fen: z.string().min(1).max(200),
 });
+
+// --- Simul -----------------------------------------------------------------
+// A board of a simultaneous exhibition is the same two-player shape as a
+// lesson board, so these mirror the live-session payloads — keyed by
+// SimulBoard id, since that is what carries both the position and the pair of
+// people entitled to move on it.
+
+const simulBoardPayload = z.object({ simulBoardId: idSchema });
+
+export const joinSimulBoardSchema = simulBoardPayload;
+
+export const simulMoveSchema = z.object({
+  simulBoardId: idSchema,
+  from: squareSchema,
+  to: squareSchema,
+  promotion: z.enum(["q", "r", "b", "n"]).optional(),
+});
+
+// --- Tournament ------------------------------------------------------------
+// The tournament room is watch-only: nothing a client sends into it changes
+// state, so there is no move-shaped payload here. Joining and leaving are the
+// whole client surface.
+
+const tournamentPayload = z.object({ tournamentId: idSchema });
+
+export const joinTournamentSchema = tournamentPayload;
+export const leaveTournamentSchema = tournamentPayload;

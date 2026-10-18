@@ -10,6 +10,7 @@ const getClassroom = vi.fn();
 const isCoachAssignedToClassroom = vi.fn();
 const getLiveSession = vi.fn();
 const markAttendance = vi.fn();
+const awardXpSafely = vi.fn();
 
 vi.mock("../../../../lib/auth/session", () => ({
   getCurrentSession: () => getCurrentSession(),
@@ -27,6 +28,13 @@ vi.mock("../../../../repositories/liveSessionRepository", () => ({
 }));
 vi.mock("../../../../repositories/attendanceRepository", () => ({
   markAttendance: (...a: unknown[]) => markAttendance(...a),
+}));
+// Unmocked, this reached a real Prisma client: awardXpSafely swallows the
+// resulting error, so the test still passed — but it spent seconds per case
+// waiting on a network round trip, and tipped over the default timeout under
+// a full-suite run. Mocking it also lets the XP rules be asserted directly.
+vi.mock("../../../../repositories/gamificationRepository", () => ({
+  awardXpSafely: (...a: unknown[]) => awardXpSafely(...a),
 }));
 
 const { markAttendanceAction } = await import("./actions");
@@ -61,6 +69,7 @@ beforeEach(() => {
     isCoachAssignedToClassroom,
     getLiveSession,
     markAttendance,
+    awardXpSafely,
   ].forEach((m) => m.mockReset());
 
   getCurrentSession.mockResolvedValue(sessionAs("COACH"));

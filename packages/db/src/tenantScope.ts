@@ -32,6 +32,7 @@ const TENANT_SCOPED_MODELS = new Set([
   "Classroom",
   "ClassroomCoach",
   "ClassroomStudent",
+  "ClassroomScheduleSlot",
   "LiveSession",
   "ReferenceBoard",
   "AttendanceRecord",
@@ -48,6 +49,12 @@ const TENANT_SCOPED_MODELS = new Set([
   "SimulBoard",
   "RatingRecord",
   "Certificate",
+  "XpEvent",
+  "StudentBadge",
+  "PgnFolder",
+  "PgnFile",
+  "CalendarBlock",
+  "LiveSessionChange",
 ]);
 
 const WHERE_SCOPED_OPERATIONS = new Set([
@@ -150,7 +157,9 @@ export function tenantScopeExtension() {
             }
           }
 
-          if (operation === "createMany") {
+          // createManyAndReturn (Prisma 5.14+) takes the same payload; without
+          // it here a bulk insert that also returns rows skipped the guard.
+          if (operation === "createMany" || operation === "createManyAndReturn") {
             const items = Array.isArray(args?.data) ? args.data : [args?.data];
             for (const item of items) {
               const dataTenantId = extractDataTenantId(item);

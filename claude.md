@@ -47,11 +47,14 @@ under Next 14's webpack 5 — a custom webpack block in an otherwise clean
 data channels, so the abstraction was worth roughly forty lines of offer/answer
 handling. The implementation is in `apps/web/lib/audio/`.
 
-**Audio is STUN-only today.** There is no TURN relay, so connections behind
-symmetric NAT or a restrictive corporate firewall will fail — realistically
-10–20%, and this product's traffic is India↔US home and office networks. Adding
-TURN (coturn on Railway, or Cloudflare Calls) is a known cost decision, not an
-oversight. See `apps/web/lib/audio/iceServers.ts`.
+**Audio uses STUN plus a TURN relay.** STUN alone can't traverse symmetric NAT
+or a restrictive corporate firewall — realistically 10–20% of connections, and
+this product's traffic is India↔US home and office networks. TURN credentials
+are minted server-side in `apps/web/lib/audio/actions.ts` (never in a
+`NEXT_PUBLIC_` variable, or any visitor could bill us for relay bandwidth), and
+`stunOnlyIceServers()` in `iceServers.ts` is the degraded fallback when the
+client can't reach that server action. Configured via `TURN_URLS`,
+`TURN_SECRET`, `TURN_TTL_SECONDS`.
 
 ---
 

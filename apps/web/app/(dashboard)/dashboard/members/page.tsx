@@ -1,5 +1,5 @@
 import { getCurrentSession } from "../../../../lib/auth/session";
-import { requireRole } from "../../../../lib/auth/requireRole";
+import { requireRoleOrNotFound } from "../../../../lib/auth/requireRole";
 import {
   listParentsAndStudents,
   listParentStudentLinks,
@@ -31,7 +31,7 @@ const ROLE_BADGE_TONE: Record<string, BadgeTone> = {
 
 export default async function MembersPage() {
   const session = await getCurrentSession();
-  requireRole(session, ["ACADEMY_ADMIN"]);
+  requireRoleOrNotFound(session, ["ACADEMY_ADMIN"]);
   const [members, { parents, students }, links] = await Promise.all([
     listTenantMembers(session.tenantId),
     listParentsAndStudents(session.tenantId),

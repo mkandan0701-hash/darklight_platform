@@ -7,6 +7,9 @@ import { createRedisClient } from "./redis";
 import { authenticateSocket, type SocketSessionData } from "./socket/authenticate";
 import { createBoardStore } from "./socket/boardStore";
 import { registerLiveSessionHandlers } from "./socket/rooms";
+import { registerSimulHandlers } from "./socket/simulRooms";
+import { registerTournamentHandlers } from "./socket/tournamentRooms";
+import { startTournamentBroadcaster } from "./socket/tournamentBroadcaster";
 import { stripeWebhookRouter } from "./webhooks/stripe";
 import { razorpayWebhookRouter } from "./webhooks/razorpay";
 import { whatsappWebhookRouter } from "./webhooks/whatsapp";
@@ -37,6 +40,25 @@ io.adapter(createAdapter(pubClient, subClient));
 // Authoritative board positions, shared across instances for the same reason.
 const boardStore = createBoardStore(createRedisClient());
 
+// Live tournament pushes originate in apps/web, which has no way to reach this
+// process's io instance. It enqueues; this consumes and re-emits. BullMQ hands
+// each job to exactly one instance, and the redis adapter above fans the emit
+// out to sockets held by all of them — so a viewer gets it once, not once per
+// instance. Unlike the jobs in worker.ts this one belongs in the API process,
+// because the broadcast needs io.
+const tournamentBroadcaster = startTournamentBroadcaster(io);
+// An EventEmitter with no error listener throws, and the handler above turns
+// that into a process exit — so without this a Redis blip would take down
+// every live lesson on this instance to protect a feature nobody would miss.
+// Logged rather than swallowed: a silently dead broadcaster looks exactly
+// like a working one until someone notices the page has stopped updating.
+tournamentBroadcaster.on("error", (err) => {
+  console.error("[tournament-events] broadcaster error:", err);
+});
+tournamentBroadcaster.on("failed", (job, err) => {
+  console.error(`[tournament-events] job ${job?.id} failed:`, err);
+});
+
 app.use(cors());
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -65,9 +87,14 @@ io.use(async (socket: Socket, next) => {
 });
 
 io.on("connection", (socket) => {
-  registerLiveSessionHandlers(io, socket as Socket & { data: SocketSessionData }, {
-    boardStore,
-  });
+  const authed = socket as Socket & { data: SocketSessionData };
+  registerLiveSessionHandlers(io, authed, { boardStore });
+  // Simul boards are separate rooms on the same connection: a coach giving an
+  // exhibition holds one socket and sits at every board through it.
+  registerSimulHandlers(io, authed, { boardStore });
+  // Watch-only, and open to anyone in the academy — no board state to sync,
+  // so no boardStore.
+  registerTournamentHandlers(authed);
 });
 
 const port = Number(process.env.API_PORT ?? 4000);

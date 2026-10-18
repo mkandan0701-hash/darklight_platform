@@ -9,8 +9,14 @@
 // That is a silent, per-platform visual failure on the page a child looks at.
 //
 // Each path is authored in a 0 0 100 100 box with ~10 units of padding, so a
-// caller can position one with a plain translate() and no scaling. Shared by
-// StaticBoard (64 squares) and PieceAvatar (one big glyph).
+// caller can position one with a plain translate() and no scaling.
+//
+// Used by PieceAvatar only. StaticBoard drew these for one commit and now uses
+// the standard Cburnett set (components/chess/cburnett.tsx) instead: on a board
+// these read as generic silhouettes, and a child scanning a puzzle list needs
+// the pieces they already know from Lichess. An avatar is the opposite problem
+// — one big glyph, one flat fill in an arbitrary palette colour — which is what
+// these are good at.
 
 export type PieceKind = "p" | "n" | "b" | "r" | "q" | "k";
 

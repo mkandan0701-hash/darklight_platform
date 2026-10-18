@@ -177,6 +177,18 @@ export async function getStudentProfileByUserId(tenantId: string, userId: string
   return prisma.studentProfile.findFirst({ where: { tenantId, userId } });
 }
 
+// By StudentProfile id rather than User id — for staff-facing flows that
+// already hold a profile id from a picker (recording a rating, issuing a
+// certificate). Tenant-scoped but NOT viewer-scoped: callers must have
+// established their right to act on this student another way (a role gate).
+// Anything a PARENT can reach must use getChildForParent instead.
+export async function getStudentProfile(tenantId: string, studentProfileId: string) {
+  return prisma.studentProfile.findFirst({
+    where: { id: studentProfileId, tenantId },
+    include: { user: true },
+  });
+}
+
 export async function getCoachProfileByUserId(tenantId: string, userId: string) {
   return prisma.coachProfile.findFirst({ where: { tenantId, userId } });
 }
@@ -224,5 +236,42 @@ export async function getChildForParent(
       parents: { some: { parent: { userId: viewer.id }, deletedAt: null } },
     },
     include: { user: true },
+  });
+}
+
+/**
+ * A student's own external chess accounts and federation IDs.
+ *
+ * Scoped by the session's userId rather than a StudentProfile id off the
+ * form, so — like updateDisplayName — there is no id here for a caller to
+ * substitute for somebody else's. Empty strings normalize to null: clearing
+ * a field means "I don't have one", and a stored "" would make the nightly
+ * game sync request an empty handle every night.
+ */
+export async function updateStudentChessAccounts(
+  tenantId: string,
+  userId: string,
+  fields: {
+    lichessHandle: string;
+    chesscomHandle: string;
+    fideId: string;
+    uscfId: string;
+    eclId: string;
+  }
+) {
+  const blankToNull = (value: string) => {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+  };
+
+  return prisma.studentProfile.updateMany({
+    where: { tenantId, userId },
+    data: {
+      lichessHandle: blankToNull(fields.lichessHandle),
+      chesscomHandle: blankToNull(fields.chesscomHandle),
+      fideId: blankToNull(fields.fideId),
+      uscfId: blankToNull(fields.uscfId),
+      eclId: blankToNull(fields.eclId),
+    },
   });
 }

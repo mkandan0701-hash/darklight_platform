@@ -70,21 +70,25 @@ export function AssignmentForm({
       {puzzles.length === 0 && (
         <p className="mt-1 text-sm text-slate">No puzzles match this rating range yet.</p>
       )}
-      <div className="mt-2 flex max-h-96 flex-wrap gap-4 overflow-y-auto">
+      {/* Taller than it was, because the tiles grew — max-h-96 left the scroller
+          showing barely one row of boards. */}
+      <div className="mt-2 flex max-h-[36rem] flex-wrap gap-4 overflow-y-auto">
         {puzzles.map((puzzle) => (
           <label
             key={puzzle.id}
-            className="w-40 cursor-pointer rounded-lg border border-transparent p-2 text-xs has-[:checked]:border-board has-[:checked]:bg-board-light"
+            className="w-60 cursor-pointer rounded-lg border border-transparent p-2 text-xs has-[:checked]:border-board has-[:checked]:bg-board-light"
           >
             <input type="checkbox" name="puzzleIds" value={puzzle.id} className="mb-1" />
             {/* StaticBoard, not Chessboard: this list is only rating-filtered,
                 so it can run to hundreds of positions, and every one of them
                 was already non-interactive. That was hundreds of react-dnd
-                provider trees mounting to draw pictures. */}
-            <div style={{ width: 152 }}>
-              <StaticBoard fen={puzzle.fen} />
-            </div>
-            <p className="mt-1 font-mono text-slate">
+                provider trees mounting to draw pictures.
+
+                No fixed pixel width — the SVG is `h-auto w-full`, so the board
+                is whatever the tile is. Sizing it in one place means the two
+                can't drift. */}
+            <StaticBoard fen={puzzle.fen} />
+            <p className="mt-2 font-mono text-slate">
               {puzzle.rating ?? "—"} · {puzzle.source === "UPLOAD" ? "your upload" : "Lichess"}
             </p>
           </label>

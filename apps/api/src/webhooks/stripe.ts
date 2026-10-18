@@ -21,13 +21,18 @@ stripeWebhookRouter.post("/", async (req, res) => {
       return res.status(400).send("Missing Stripe signature");
     }
 
+    // An unset secret is not "no check": stripe-node happily verifies an
+    // HMAC keyed with "", which anyone can compute — so a forged
+    // payment_intent.succeeded would mark an invoice PAID. Refuse instead.
+    const secret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!secret) {
+      console.error("Stripe webhook rejected: STRIPE_WEBHOOK_SECRET is not configured");
+      return res.status(503).send("Webhook not configured");
+    }
+
     let event: Stripe.Event;
     try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        signature,
-        process.env.STRIPE_WEBHOOK_SECRET ?? ""
-      );
+      event = stripe.webhooks.constructEvent(req.body, signature, secret);
     } catch (err) {
       return res.status(400).send(`Webhook signature verification failed`);
     }
@@ -50,7 +55,16 @@ stripeWebhookRouter.post("/", async (req, res) => {
         const status = event.type === "payment_intent.succeeded" ? "PAID" : "FAILED";
         await runWithTenant(invoice.tenantId, () =>
           prisma.invoice.updateMany({
-            where: { provider: "STRIPE", providerRef: intent.id, tenantId: invoice.tenantId },
+            where: {
+              provider: "STRIPE",
+              providerRef: intent.id,
+              tenantId: invoice.tenantId,
+            // A webhook may only move an invoice forward. Providers deliver
+            // out of order and retry: a failed attempt reported after the
+            // successful one must not turn PAID back into FAILED, and a repeat
+            // "succeeded" must not overwrite the original paidAtUtc.
+            status: { notIn: ["PAID", "REFUNDED"] },
+            },
             data:
               status === "PAID"
                 ? { status: "PAID", paidAtUtc: new Date() }
