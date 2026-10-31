@@ -1,4 +1,5 @@
 import express from "express";
+import { requireTenantContext } from "@chessplay-clone/db";
 import cors from "cors";
 import { createServer } from "node:http";
 import { Server, type Socket } from "socket.io";
@@ -13,6 +14,11 @@ import { startTournamentBroadcaster } from "./socket/tournamentBroadcaster";
 import { stripeWebhookRouter } from "./webhooks/stripe";
 import { razorpayWebhookRouter } from "./webhooks/razorpay";
 import { whatsappWebhookRouter } from "./webhooks/whatsapp";
+
+// Every tenant-scoped query in this process runs inside runWithTenant (socket
+// handlers, webhooks, jobs), so one that doesn't is a bug: refuse it rather
+// than fall back to tenantScope's presence-only check.
+requireTenantContext(true);
 
 // Node's default for an unhandled rejection is already to crash, but silently
 // enough that Railway shows a restart with no cause. Logging first is the whole

@@ -1,4 +1,4 @@
-import { prisma, Prisma } from "@chessplay-clone/db";
+import { prisma, Prisma, runWithTenant } from "@chessplay-clone/db";
 import { createUserWithProfileTx, type NewUserInput } from "./userRepository";
 
 /**
@@ -48,12 +48,16 @@ export async function createTenantWithAdmin(input: {
 }) {
   return prisma.$transaction(async (tx) => {
     const tenant = await tx.tenant.create({ data: input.tenant });
-    const admin = await createUserWithProfileTx(tx, {
-      ...input.admin,
-      tenantId: tenant.id,
-      role: "ACADEMY_ADMIN",
-      timezone: input.tenant.timezone,
-    });
+    // Signup has no session yet, so it opens the new tenant's context itself:
+    // the admin insert is then verified like any other, strict mode included.
+    const admin = await runWithTenant(tenant.id, () =>
+      createUserWithProfileTx(tx, {
+        ...input.admin,
+        tenantId: tenant.id,
+        role: "ACADEMY_ADMIN",
+        timezone: input.tenant.timezone,
+      })
+    );
     return { tenant, admin };
   });
 }

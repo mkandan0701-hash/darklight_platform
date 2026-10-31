@@ -2,6 +2,7 @@
 // so long-running jobs (e.g. downloading + writing hundreds of thousands of
 // puzzle rows) never compete with request handling. Run via `npm run worker`.
 import type { Worker } from "bullmq";
+import { requireTenantContext } from "@chessplay-clone/db";
 import { createPuzzleImportWorker } from "./workers/puzzleImportWorker";
 import { createClassroomScheduleMaterializeWorker } from "./workers/classroomScheduleMaterializeWorker";
 import { createChesscomSyncWorker, createLichessSyncWorker } from "./workers/gameSyncWorker";
@@ -11,6 +12,11 @@ import {
   classroomScheduleMaterializeQueue,
   lichessSyncQueue,
 } from "./queues";
+
+// Every tenant-scoped query in this process runs inside runWithTenant (socket
+// handlers, webhooks, jobs), so one that doesn't is a bug: refuse it rather
+// than fall back to tenantScope's presence-only check.
+requireTenantContext(true);
 
 function log(worker: Worker, label: string) {
   worker.on("completed", (job, result) => {
