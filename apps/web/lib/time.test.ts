@@ -4,6 +4,7 @@ import {
   formatInZone,
   formatTimeInZone,
   nextWeekendLocalDefault,
+  dateBlockInZone,
 } from "./time";
 
 describe("formatTimeInZone", () => {
@@ -86,5 +87,27 @@ describe("nextWeekendLocalDefault", () => {
 
     const result = nextWeekendLocalDefault("America/New_York");
     expect(result).toBe("2026-01-24T10:00");
+  });
+});
+
+describe("dateBlockInZone", () => {
+  // 22:30 UTC on 23 Dec is 04:00 on 24 Dec in Kolkata and 17:30 on 23 Dec in
+  // New York — the same class on two different calendar days.
+  const instant = new Date("2026-12-23T22:30:00.000Z");
+
+  it("reads day and time from the viewer's zone together", () => {
+    expect(dateBlockInZone(instant, "Asia/Kolkata")).toMatchObject({
+      day: "24",
+      month: "DEC",
+      weekday: "Thu",
+      time: "4:00 AM",
+    });
+    expect(dateBlockInZone(instant, "America/New_York")).toMatchObject({
+      day: "23",
+      month: "DEC",
+      weekday: "Wed",
+      time: "5:30 PM",
+      zoneAbbr: "EST",
+    });
   });
 });

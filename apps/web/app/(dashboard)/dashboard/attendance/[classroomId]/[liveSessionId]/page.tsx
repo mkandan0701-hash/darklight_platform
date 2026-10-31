@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getCurrentSession } from "../../../../../../lib/auth/session";
 import { requireRole } from "../../../../../../lib/auth/requireRole";
 import { formatInZone } from "../../../../../../lib/time";
+import { displayName } from "../../../../../../lib/displayName";
 import { getClassroomForViewer } from "../../../../../../repositories/classroomRepository";
 import { getLiveSession } from "../../../../../../repositories/liveSessionRepository";
 import { getAttendanceForSession } from "../../../../../../repositories/attendanceRepository";
@@ -44,6 +45,7 @@ export default async function MarkAttendancePage({
     const record = byStudent.get(enrollment.studentId);
     return {
       studentId: enrollment.studentId,
+      name: displayName(enrollment.student.user),
       email: enrollment.student.user.email,
       present: record?.present ?? true,
       mode: (record?.mode as "ONLINE" | "OFFLINE") ?? "ONLINE",

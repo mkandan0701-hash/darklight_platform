@@ -222,3 +222,59 @@ export async function enrollStudent(
     data: { tenantId, classroomId, studentId: studentProfileId },
   });
 }
+
+/** null clears the link. Soft-deleted rooms are left alone. */
+export async function setClassroomMeetingUrl(
+  tenantId: string,
+  classroomId: string,
+  meetingUrl: string | null
+): Promise<boolean> {
+  const result = await prisma.classroom.updateMany({
+    where: { id: classroomId, tenantId, deletedAt: null },
+    data: { meetingUrl },
+  });
+  return result.count > 0;
+}
+
+/**
+ * The "Class Series" view of the management board: each room the viewer can
+ * see, with its weekly pattern and the next class it has coming up.
+ *
+ * One query rather than listClassroomsForViewer plus a slot lookup and a
+ * next-session lookup per room — those would be 2N+1 round trips on the page
+ * academies land on.
+ */
+export async function listClassroomSeriesForViewer(viewer: ClassroomViewer, q?: string) {
+  const term = q?.trim();
+  return prisma.classroom.findMany({
+    where: {
+      tenantId: viewer.tenantId,
+      ...visibleClassroomWhere(viewer),
+      ...(term ? { name: { contains: term, mode: "insensitive" as const } } : {}),
+    },
+    include: {
+      ...CLASSROOM_INCLUDE,
+      scheduleSlots: {
+        where: { isActive: true, deletedAt: null },
+        orderBy: [{ dayOfWeek: "asc" }, { localTime: "asc" }],
+      },
+      liveSessions: {
+        where: { status: { not: "CANCELLED" }, scheduledAtUtc: { gte: new Date() } },
+        orderBy: { scheduledAtUtc: "asc" },
+        take: 1,
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+/** Coaches teaching in rooms the viewer can see — the board's coach filter. */
+export async function listCoachesForViewer(viewer: ClassroomViewer) {
+  return prisma.coachProfile.findMany({
+    where: {
+      tenantId: viewer.tenantId,
+      classrooms: { some: { classroom: visibleClassroomWhere(viewer) } },
+    },
+    select: { id: true, user: { select: { displayName: true, email: true } } },
+  });
+}

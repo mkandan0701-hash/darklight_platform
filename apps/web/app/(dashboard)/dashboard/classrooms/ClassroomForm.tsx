@@ -5,7 +5,7 @@ import { createClassroomAction } from "./actions";
 import { Field, fieldInputClass } from "../../../../components/ui/Field";
 import { Button } from "../../../../components/ui/Button";
 
-export function ClassroomForm() {
+export function ClassroomForm({ onCreated }: { onCreated?: () => void } = {}) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
@@ -19,6 +19,7 @@ export function ClassroomForm() {
         return;
       }
       formRef.current?.reset();
+      onCreated?.();
     });
   }
 
@@ -27,6 +28,10 @@ export function ClassroomForm() {
       <Field label="New classroom name">
         <input name="name" required className={fieldInputClass} />
       </Field>
+      <label className="flex items-center gap-2 pb-2 text-sm text-ink">
+        <input type="checkbox" name="weekendFirst" defaultChecked className="h-4 w-4" />
+        Weekend-first scheduling
+      </label>
       <Button type="submit" disabled={pending}>
         {pending ? "Creating…" : "Create classroom"}
       </Button>

@@ -168,6 +168,11 @@ model Classroom {
   tenant       Tenant    @relation(fields: [tenantId], references: [id])
   name         String
   weekendFirst Boolean   @default(true)
+  // A standing video link for the room (Google Meet, Zoom, Teams). Pasted,
+  // not provisioned: a Meet link never expires, so one per classroom covers
+  // every weekly occurrence without an OAuth integration. Live board + audio
+  // remain the native path; this sits beside them, not instead of them.
+  meetingUrl   String?
   createdAt    DateTime  @default(now())
   deletedAt    DateTime?
 
@@ -241,6 +246,15 @@ model LiveSession {
   durationMins   Int
   socketRoomId   String        @unique
   status         SessionStatus @default(SCHEDULED)
+
+  // When the coach pressed Start. A recorded fact, not a status: nothing has
+  // to come back later and flip it, so it can't go stale the way the old
+  // status column did (see apps/web/lib/liveSession.ts). Its absence after a
+  // session's end is what makes the session "delayed".
+  startedAtUtc   DateTime?
+  // Overrides Classroom.meetingUrl for this one occurrence.
+  meetingUrl     String?
+  updatedAt      DateTime      @default(now()) @updatedAt
 
   // Both null for a manually-scheduled one-off session (the only path before
   // weekend-first templates existed). Set together when a session is

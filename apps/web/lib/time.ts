@@ -39,3 +39,23 @@ export function nextWeekendLocalDefault(zone: string): string {
   }
   return candidate.toFormat("yyyy-LL-dd'T'HH:mm");
 }
+
+/**
+ * The calendar-tile pieces of a session card — day, month, weekday, clock —
+ * all read in the *viewer's* zone. Done as one conversion so the day number
+ * and the time can never disagree near midnight (a 4:00 AM IST class is the
+ * previous evening in New Jersey, and both halves of the tile must say so).
+ */
+export function dateBlockInZone(
+  date: Date,
+  zone: string
+): { day: string; month: string; weekday: string; time: string; zoneAbbr: string } {
+  const dt = DateTime.fromJSDate(date, { zone: "utc" }).setZone(zone);
+  return {
+    day: dt.toFormat("d"),
+    month: dt.toFormat("LLL").toUpperCase(),
+    weekday: dt.toFormat("ccc"),
+    time: dt.toFormat("h:mm a"),
+    zoneAbbr: dt.toFormat("ZZZZ"),
+  };
+}
