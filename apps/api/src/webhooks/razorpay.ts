@@ -22,7 +22,13 @@ function isValidSignature(rawBody: Buffer, signature: string, secret: string) {
 razorpayWebhookRouter.post("/", async (req, res) => {
   try {
     const signature = req.headers["x-razorpay-signature"];
-    const secret = process.env.RAZORPAY_WEBHOOK_SECRET ?? "";
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    // HMAC keyed with "" is computable by anyone — an unset secret must
+    // refuse, not verify against an empty key.
+    if (!secret) {
+      console.error("Razorpay webhook rejected: RAZORPAY_WEBHOOK_SECRET is not configured");
+      return res.status(503).send("Webhook not configured");
+    }
     if (
       !signature ||
       typeof signature !== "string" ||
@@ -51,7 +57,16 @@ razorpayWebhookRouter.post("/", async (req, res) => {
         const status = event.event === "payment.captured" ? "PAID" : "FAILED";
         await runWithTenant(invoice.tenantId, () =>
           prisma.invoice.updateMany({
-            where: { provider: "RAZORPAY", providerRef: payment.order_id, tenantId: invoice.tenantId },
+            where: {
+              provider: "RAZORPAY",
+              providerRef: payment.order_id,
+              tenantId: invoice.tenantId,
+            // A webhook may only move an invoice forward. Providers deliver
+            // out of order and retry: a failed attempt reported after the
+            // successful one must not turn PAID back into FAILED, and a repeat
+            // "succeeded" must not overwrite the original paidAtUtc.
+            status: { notIn: ["PAID", "REFUNDED"] },
+            },
             data:
               status === "PAID"
                 ? { status: "PAID", paidAtUtc: new Date() }

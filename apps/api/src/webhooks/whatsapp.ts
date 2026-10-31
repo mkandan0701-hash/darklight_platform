@@ -11,7 +11,9 @@ whatsappWebhookRouter.get("/", (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+  // Unset must not match an absent query param (undefined === undefined).
+  const expected = process.env.WHATSAPP_VERIFY_TOKEN;
+  if (expected && mode === "subscribe" && token === expected) {
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
@@ -32,8 +34,9 @@ function isValidSignature(rawBody: Buffer, signatureHeader: string, appSecret: s
 
 whatsappWebhookRouter.post("/", (req, res) => {
   const signature = req.headers["x-hub-signature-256"];
-  const appSecret = process.env.WHATSAPP_APP_SECRET ?? "";
+  const appSecret = process.env.WHATSAPP_APP_SECRET;
   if (
+    !appSecret ||
     !signature ||
     typeof signature !== "string" ||
     !isValidSignature(req.body, signature, appSecret)

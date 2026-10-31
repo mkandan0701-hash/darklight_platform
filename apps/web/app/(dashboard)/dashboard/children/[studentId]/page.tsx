@@ -13,9 +13,14 @@ import {
   getStudentAttendanceDetail,
   getStudentAttendanceSummary,
 } from "../../../../../repositories/attendanceRepository";
+import { listInvoicesForStudent } from "../../../../../repositories/invoiceRepository";
+import { listRatingsForStudent } from "../../../../../repositories/ratingRepository";
+import { listCertificatesForStudent } from "../../../../../repositories/certificateRepository";
 import { formatAttendanceRate, resolveStatus } from "../../../../../lib/attendance";
 import { formatInZone } from "../../../../../lib/time";
 import { displayName } from "../../../../../lib/displayName";
+import { formatAmount } from "../../../../../lib/money";
+import { invoiceStatusTone } from "../../../../../lib/invoiceStatus";
 import { Card } from "../../../../../components/ui/Card";
 import { Badge } from "../../../../../components/ui/Badge";
 import { EmptyState } from "../../../../../components/ui/EmptyState";
@@ -46,6 +51,12 @@ const STATUS_TONE = {
   absent: "danger",
   unmarked: "neutral",
 } as const;
+
+const CERTIFICATE_LABEL: Record<string, string> = {
+  ATTENDANCE: "Attendance",
+  RATING_MILESTONE: "Rating achievement",
+  TOURNAMENT_RESULT: "Tournament result",
+};
 
 export default async function ChildPage({ params }: { params: { studentId: string } }) {
   const session = await getCurrentSession();
@@ -100,6 +111,10 @@ export default async function ChildPage({ params }: { params: { studentId: strin
   const completedCount = homework.filter(
     ({ assignment, solved }) => assignment.puzzles.length > 0 && solved === assignment.puzzles.length
   ).length;
+
+  const invoices = await listInvoicesForStudent(session.tenantId, child.id);
+  const ratings = await listRatingsForStudent(session.tenantId, child.id);
+  const certificates = await listCertificatesForStudent(session.tenantId, child.id);
 
   return (
     <div>
@@ -237,6 +252,95 @@ export default async function ChildPage({ params }: { params: { studentId: strin
                   total={assignment.puzzles.length}
                   label={`${solved} of ${assignment.puzzles.length} puzzles solved`}
                 />
+              </Card>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="mt-8">
+        <h2 className={sectionHeadingClass}>Ratings</h2>
+        {ratings.length === 0 ? (
+          <div className="mt-3">
+            <EmptyState
+              title="No official ratings yet"
+              description={`${name}'s coach records FIDE, USCF or ECF ratings here after rated events.`}
+            />
+          </div>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {ratings.map((rating) => (
+              <Card key={rating.id} className="flex items-center justify-between p-4">
+                <span className="text-sm text-ink">
+                  <Badge>{rating.federation}</Badge>{" "}
+                  <span className="ml-2 font-mono">{rating.rating}</span>
+                </span>
+                <span className="text-xs text-slate">
+                  {formatInZone(rating.recordedAtUtc, session.timezone)}
+                </span>
+              </Card>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="mt-8">
+        <h2 className={sectionHeadingClass}>Certificates</h2>
+        {certificates.length === 0 ? (
+          <div className="mt-3">
+            <EmptyState
+              title="No certificates yet"
+              description={`Certificates the academy issues for ${name} — useful for college applications — will appear here to download.`}
+            />
+          </div>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {certificates.map((certificate) => (
+              <Card
+                key={certificate.id}
+                className="flex flex-wrap items-center justify-between gap-3 p-4"
+              >
+                <a
+                  href={certificate.pdfUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={textLinkClass}
+                >
+                  {CERTIFICATE_LABEL[certificate.type] ?? certificate.type}
+                  {certificate.eventName ? ` — ${certificate.eventName}` : ""}
+                </a>
+                <span className="text-xs text-slate">
+                  Issued {formatInZone(certificate.issuedAtUtc, session.timezone)}
+                </span>
+              </Card>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="mt-8">
+        <h2 className={sectionHeadingClass}>Billing</h2>
+        {invoices.length === 0 ? (
+          <div className="mt-3">
+            <EmptyState
+              title="No invoices yet"
+              description={`Tuition invoices for ${name} will show up here.`}
+            />
+          </div>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {invoices.map((invoice) => (
+              <Card key={invoice.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <Link href={`/dashboard/billing/${invoice.id}`} className={textLinkClass}>
+                  {invoice.description ?? "Invoice"}
+                </Link>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-xs text-slate">
+                    {formatAmount(invoice.amount, invoice.currency)} · due{" "}
+                    {formatInZone(invoice.dueAtUtc, session.timezone)}
+                  </span>
+                  <Badge tone={invoiceStatusTone(invoice.status)}>{invoice.status}</Badge>
+                </div>
               </Card>
             ))}
           </ul>
