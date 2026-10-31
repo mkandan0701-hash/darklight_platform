@@ -1,4 +1,5 @@
-import { prisma } from "@chessplay-clone/db";
+import { prisma, Prisma } from "@chessplay-clone/db";
+import { createUserWithProfileTx, type NewUserInput } from "./userRepository";
 
 /**
  * Resolve the academy a request is for, from its subdomain.
@@ -30,6 +31,38 @@ export async function createTenant(input: {
   timezone: string;
 }) {
   return prisma.tenant.create({ data: input });
+}
+
+/**
+ * Signup: the academy and its first admin, in one transaction.
+ *
+ * Separately, a failure creating the admin left a Tenant row with nobody able
+ * to sign in to it — and because `subdomain` is unique, that name was gone
+ * for good. Two concurrent signups for the same subdomain are settled by the
+ * unique index, not by a read beforehand: the loser's insert fails with
+ * P2002 (see isSubdomainTakenError) and its transaction rolls back whole.
+ */
+export async function createTenantWithAdmin(input: {
+  tenant: { name: string; subdomain: string; timezone: string };
+  admin: Omit<NewUserInput, "tenantId" | "role" | "timezone">;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const tenant = await tx.tenant.create({ data: input.tenant });
+    const admin = await createUserWithProfileTx(tx, {
+      ...input.admin,
+      tenantId: tenant.id,
+      role: "ACADEMY_ADMIN",
+      timezone: input.tenant.timezone,
+    });
+    return { tenant, admin };
+  });
+}
+
+/** The unique-index violation a subdomain race (or an already-taken name) raises. */
+export function isSubdomainTakenError(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") return false;
+  const target = err.meta?.target;
+  return Array.isArray(target) ? target.includes("subdomain") : String(target ?? "").includes("subdomain");
 }
 
 export async function updateTenantBranding(

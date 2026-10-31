@@ -25,7 +25,7 @@ export async function updateDisplayName(
   });
 }
 
-export async function createUserWithProfile(input: {
+export type NewUserInput = {
   tenantId: string;
   email: string;
   role: Role;
@@ -33,35 +33,43 @@ export async function createUserWithProfile(input: {
   authProviderId: string;
   /** Optional: an admin inviting someone may not know their name yet. */
   displayName?: string | null;
-}) {
-  return prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
-      data: {
-        tenantId: input.tenantId,
-        email: input.email,
-        displayName: normalizeDisplayName(input.displayName),
-        role: input.role,
-        timezone: input.timezone,
-        authProviderId: input.authProviderId,
-      },
-    });
+};
 
-    if (input.role === "COACH") {
-      await tx.coachProfile.create({
-        data: { userId: user.id, tenantId: input.tenantId },
-      });
-    } else if (input.role === "STUDENT") {
-      await tx.studentProfile.create({
-        data: { userId: user.id, tenantId: input.tenantId },
-      });
-    } else if (input.role === "PARENT") {
-      await tx.parentProfile.create({
-        data: { userId: user.id, tenantId: input.tenantId },
-      });
-    }
+// A transaction client from prisma.$transaction, so callers that create more
+// than the user (signup creates the Tenant first) can keep it all atomic.
+export type Tx = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
 
-    return user;
+export async function createUserWithProfileTx(tx: Tx, input: NewUserInput) {
+  const user = await tx.user.create({
+    data: {
+      tenantId: input.tenantId,
+      email: input.email,
+      displayName: normalizeDisplayName(input.displayName),
+      role: input.role,
+      timezone: input.timezone,
+      authProviderId: input.authProviderId,
+    },
   });
+
+  if (input.role === "COACH") {
+    await tx.coachProfile.create({
+      data: { userId: user.id, tenantId: input.tenantId },
+    });
+  } else if (input.role === "STUDENT") {
+    await tx.studentProfile.create({
+      data: { userId: user.id, tenantId: input.tenantId },
+    });
+  } else if (input.role === "PARENT") {
+    await tx.parentProfile.create({
+      data: { userId: user.id, tenantId: input.tenantId },
+    });
+  }
+
+  return user;
+}
+
+export async function createUserWithProfile(input: NewUserInput) {
+  return prisma.$transaction((tx) => createUserWithProfileTx(tx, input));
 }
 
 export async function listTenantMembers(tenantId: string) {
