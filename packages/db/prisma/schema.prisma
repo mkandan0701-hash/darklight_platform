@@ -857,3 +857,47 @@ model PgnFile {
   @@index([tenantId])
   @@index([folderId])
 }
+
+// ---------------------------------------------------------------------------
+// Webhook event ledger
+// ---------------------------------------------------------------------------
+// One row per provider event, so a retried or duplicated delivery is
+// recognised and not processed twice (Stripe and Razorpay both retry, and both
+// may deliver the same event more than once). Platform-level, not tenant-
+// scoped: the tenant is unknown until the event is matched to a row, and some
+// events never are. tenantId records that match when there is one.
+//
+// No payload is stored — event bodies carry customer and payment identifiers.
+// The provider's dashboard keeps the payload; this keeps the outcome.
+model WebhookEvent {
+  id              String             @id @default(cuid())
+  provider        WebhookProvider
+  externalEventId String
+  eventType       String
+  status          WebhookEventStatus @default(PROCESSING)
+  tenantId        String?
+  attempts        Int                @default(1)
+  // A short, non-sensitive classification of the last failure (an error class
+  // or Prisma code), never a message that might quote the payload.
+  errorCode       String?
+  receivedAt      DateTime           @default(now())
+  processedAt     DateTime?
+
+  @@unique([provider, externalEventId])
+  @@index([tenantId])
+  @@index([status, receivedAt])
+}
+
+enum WebhookProvider {
+  STRIPE
+  RAZORPAY
+}
+
+enum WebhookEventStatus {
+  PROCESSING
+  PROCESSED
+  // Verified and recorded, but nothing to do: an event type we don't handle,
+  // or one that matches no invoice.
+  IGNORED
+  FAILED
+}

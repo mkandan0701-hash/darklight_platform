@@ -13,12 +13,42 @@ import { whatsappWebhookRouter } from "./whatsapp";
 //  2. A late/retried failure event downgraded an already-PAID invoice.
 // Real HTTP against each router, so the raw-body signature path is exercised.
 
-const { findUnique, updateMany } = vi.hoisted(() => ({ findUnique: vi.fn(), updateMany: vi.fn() }));
-vi.mock("@chessplay-clone/db", () => ({
-  prismaBase: { invoice: { findUnique: (...a: unknown[]) => findUnique(...a) } },
-  prisma: { invoice: { updateMany: (...a: unknown[]) => updateMany(...a) } },
-  runWithTenant: (_t: string, fn: () => unknown) => fn(),
+const { findUnique, updateMany, ledger } = vi.hoisted(() => ({
+  findUnique: vi.fn(),
+  updateMany: vi.fn(),
+  // An in-memory WebhookEvent table, so the real ledger runs end to end.
+  ledger: new Map<string, { id: string; status: string; receivedAt: Date }>(),
 }));
+vi.mock("@chessplay-clone/db", async (importOriginal) => {
+  const { Prisma } = await importOriginal<typeof import("@chessplay-clone/db")>();
+  const keyOf = (k: { provider: string; externalEventId: string }) => `${k.provider}:${k.externalEventId}`;
+  const byId = (id: string) => [...ledger.values()].find((row) => row.id === id)!;
+  return {
+    Prisma,
+    prismaBase: { invoice: { findUnique: (...a: unknown[]) => findUnique(...a) } },
+    prisma: {
+      invoice: { updateMany: (...a: unknown[]) => updateMany(...a) },
+      webhookEvent: {
+        create: async ({ data }: { data: { provider: string; externalEventId: string } }) => {
+          const key = keyOf(data);
+          if (ledger.has(key)) {
+            throw new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "test" });
+          }
+          const row = { id: `we_${ledger.size + 1}`, status: "PROCESSING", receivedAt: new Date() };
+          ledger.set(key, row);
+          return { id: row.id };
+        },
+        findUnique: async ({ where }: { where: { provider_externalEventId: { provider: string; externalEventId: string } } }) =>
+          ledger.get(keyOf(where.provider_externalEventId)) ?? null,
+        updateMany: async () => ({ count: 0 }),
+        update: async ({ where, data }: { where: { id: string }; data: { status: string } }) => {
+          byId(where.id).status = data.status;
+        },
+      },
+    },
+    runWithTenant: (_t: string, fn: () => unknown) => fn(),
+  };
+});
 
 
 let base = "";
@@ -40,6 +70,7 @@ const saved = { ...process.env };
 beforeEach(() => {
   findUnique.mockReset().mockResolvedValue({ tenantId: "t_1" });
   updateMany.mockReset().mockResolvedValue({ count: 1 });
+  ledger.clear();
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {
@@ -89,6 +120,38 @@ describe("Stripe webhook", () => {
     expect(updateMany.mock.calls[0][0].where.status).toEqual({ notIn: ["PAID", "REFUNDED"] });
     expect(updateMany.mock.calls[0][0].data).toEqual({ status: "FAILED" });
   });
+
+  // Stripe retries, and may deliver one event more than once.
+  it("processes a redelivered event only once", async () => {
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_real";
+    const body = stripeBody("payment_intent.succeeded");
+
+    const first = await post("/stripe", body, { "stripe-signature": stripeSig(body, "whsec_real") });
+    const second = await post("/stripe", body, { "stripe-signature": stripeSig(body, "whsec_real") });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({ received: true, duplicate: true });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(ledger.get("STRIPE:evt_1")?.status).toBe("PROCESSED");
+  });
+
+  it("records an event it doesn't handle as ignored", async () => {
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_real";
+    const body = stripeBody("customer.created");
+    const res = await post("/stripe", body, { "stripe-signature": stripeSig(body, "whsec_real") });
+    expect(res.status).toBe(200);
+    expect(ledger.get("STRIPE:evt_1")?.status).toBe("IGNORED");
+  });
+
+  it("answers 500 and records the failure when the update throws, so Stripe retries", async () => {
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_real";
+    updateMany.mockRejectedValue(new Error("db down"));
+    const body = stripeBody("payment_intent.succeeded");
+    const res = await post("/stripe", body, { "stripe-signature": stripeSig(body, "whsec_real") });
+    expect(res.status).toBe(500);
+    expect(ledger.get("STRIPE:evt_1")?.status).toBe("FAILED");
+  });
 });
 
 const razorpayBody = (event: string) =>
@@ -120,6 +183,29 @@ describe("Razorpay webhook", () => {
     const body = razorpayBody("payment.captured");
     const res = await post("/razorpay", body, { "x-razorpay-signature": hmac(body, "nope") });
     expect(res.status).toBe(400);
+  });
+
+  it("processes a redelivered event only once, keyed on x-razorpay-event-id", async () => {
+    process.env.RAZORPAY_WEBHOOK_SECRET = "rzp_real";
+    const body = razorpayBody("payment.captured");
+    const headers = { "x-razorpay-signature": hmac(body, "rzp_real"), "x-razorpay-event-id": "rzp_evt_1" };
+
+    await post("/razorpay", body, headers);
+    const second = await post("/razorpay", body, headers);
+
+    expect(await second.json()).toEqual({ received: true, duplicate: true });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the body's hash when the event-id header is missing", async () => {
+    process.env.RAZORPAY_WEBHOOK_SECRET = "rzp_real";
+    const body = razorpayBody("payment.captured");
+    const headers = { "x-razorpay-signature": hmac(body, "rzp_real") };
+
+    await post("/razorpay", body, headers);
+    await post("/razorpay", body, headers);
+
+    expect(updateMany).toHaveBeenCalledTimes(1);
   });
 });
 
