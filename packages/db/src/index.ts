@@ -1,7 +1,7 @@
 import { PrismaClient } from "../generated/client";
 import { tenantScopeExtension } from "./tenantScope";
 
-export { runWithTenant, enterTenantContext, getAmbientTenantId } from "./context";
+export { runWithTenant, enterTenantContext, openTenantContext, getAmbientTenantId } from "./context";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
