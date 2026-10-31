@@ -22,7 +22,7 @@ export async function listActiveScheduleSlotsForTenant(tenantId: string) {
 export async function materializeSlot(
   tenantId: string,
   slot: Pick<ClassroomScheduleSlot, "id" | "classroomId" | "dayOfWeek" | "localTime" | "timezone" | "durationMins"> &
-    { startsOn?: string | null }
+    Partial<Pick<ClassroomScheduleSlot, "startsOn">>
 ) {
   const occurrences = computeUpcomingOccurrencesUtc(slot, { horizonWeeks: HORIZON_WEEKS });
 

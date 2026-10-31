@@ -38,6 +38,7 @@ model Tenant {
   classroomScheduleSlots ClassroomScheduleSlot[]
   pgnFolders  PgnFolder[]
   pgnFiles    PgnFile[]
+  calendarBlocks CalendarBlock[]
 
   @@index([subdomain])
 }
@@ -74,6 +75,8 @@ model User {
   issuedCertificates Certificate[]
   createdPgnFolders  PgnFolder[] @relation("PgnFoldersCreated")
   uploadedPgnFiles   PgnFile[]   @relation("PgnFilesUploaded")
+  createdCalendarBlocks CalendarBlock[]
+  liveSessionChanges    LiveSessionChange[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -98,6 +101,7 @@ model CoachProfile {
 
   classrooms      ClassroomCoach[]
   referenceBoards ReferenceBoard[]
+  calendarBlocks  CalendarBlock[]
 
   @@index([tenantId])
 }
@@ -202,6 +206,12 @@ model ClassroomScheduleSlot {
   localTime    String // "HH:mm", interpreted in `timezone`
   timezone     String
   durationMins Int
+  // First date ("yyyy-LL-dd", in `timezone`) this template may produce an
+  // occurrence for. Null means no lower bound — every slot before the calendar
+  // existed. Set when a weekly repeat starts in the future, and when a series
+  // is split ("this and following"), so the new template doesn't backfill the
+  // weeks the old one still owns.
+  startsOn     String?
   isActive     Boolean   @default(true)
   createdAt    DateTime  @default(now())
   deletedAt    DateTime?
@@ -266,10 +276,24 @@ model LiveSession {
   scheduleSlot   ClassroomScheduleSlot? @relation(fields: [scheduleSlotId], references: [id])
   occurrenceDate String?
 
+  // The IANA zone the session was scheduled in — what its wall-clock time
+  // means to whoever booked it. Nullable because nothing recorded it before
+  // the calendar; readers fall back to the slot's zone, then the viewer's.
+  // Display never uses it: every viewer still sees their own zone.
+  timezone       String?
+  // Groups the occurrences of a finite recurrence ("every Tue/Thu for 10
+  // weeks") created from the calendar, so "this and following" / "whole
+  // series" edits can find their siblings. Open-ended weekly repeats use
+  // scheduleSlotId instead — a session has at most one of the two.
+  seriesId       String?
+
   referenceBoard ReferenceBoard?
   attendance     AttendanceRecord[]
+  changes        LiveSessionChange[]
 
   @@index([tenantId])
+  @@index([tenantId, scheduledAtUtc])
+  @@index([seriesId])
   // Postgres treats NULLs as distinct, so manually-scheduled rows (both
   // fields null) never collide with each other or with template rows.
   @@unique([scheduleSlotId, occurrenceDate])
@@ -314,6 +338,76 @@ enum AttendanceMode {
   OFFLINE
 }
 
+// Audit trail for schedule changes made to a LiveSession (claude.md §4: coaches
+// and parents need audit trails). One row per change, never updated. Also what
+// lets the calendar label a class "Rescheduled" — the session row alone can't
+// say whether its time is the one people were originally told.
+model LiveSessionChange {
+  id                   String                @id @default(cuid())
+  tenantId             String
+  liveSessionId        String
+  liveSession          LiveSession           @relation(fields: [liveSessionId], references: [id])
+  kind                 LiveSessionChangeKind
+  changedByUserId      String?
+  changedBy            User?                 @relation(fields: [changedByUserId], references: [id])
+  previousStartUtc     DateTime?
+  previousDurationMins Int?
+  newStartUtc          DateTime?
+  newDurationMins      Int?
+  // An admin saved over a detected clash. The summary is the clash as it was
+  // shown to them, so the record explains itself after the other class moves.
+  conflictOverride     Boolean               @default(false)
+  conflictSummary      String?
+  createdAtUtc         DateTime              @default(now())
+
+  @@index([tenantId])
+  @@index([liveSessionId])
+}
+
+enum LiveSessionChangeKind {
+  CREATED
+  RESCHEDULED
+  CANCELLED
+}
+
+// Calendar entries that are not a class, homework, tournament or simul — those
+// already have authoritative rows of their own, and the calendar reads them
+// directly rather than copying them here.
+//   HOLIDAY      academy closed; visible to everyone in the academy.
+//   UNAVAILABLE  one coach's blocked time (coachId); visible to admins and
+//                that coach only, and checked when scheduling their classes.
+//   OTHER        anything else; everyone, or staff only when staffOnly.
+model CalendarBlock {
+  id              String            @id @default(cuid())
+  tenantId        String
+  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  kind            CalendarBlockKind
+  title           String
+  description     String?
+  startsAtUtc     DateTime
+  endsAtUtc       DateTime
+  // The zone it was entered in, so editing shows the same wall clock back.
+  timezone        String
+  allDay          Boolean           @default(false)
+  coachId         String?
+  coach           CoachProfile?     @relation(fields: [coachId], references: [id])
+  staffOnly       Boolean           @default(false)
+  createdByUserId String?
+  createdBy       User?             @relation(fields: [createdByUserId], references: [id])
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @default(now()) @updatedAt
+  deletedAt       DateTime?
+
+  @@index([tenantId, startsAtUtc])
+  @@index([coachId])
+}
+
+enum CalendarBlockKind {
+  HOLIDAY
+  UNAVAILABLE
+  OTHER
+}
+
 model Assignment {
   id          String    @id @default(cuid())
   tenantId    String
@@ -327,6 +421,7 @@ model Assignment {
   puzzleAttempts PuzzleAttempt[]
 
   @@index([tenantId])
+  @@index([tenantId, dueAtUtc])
 }
 
 // ---------------------------------------------------------------------------

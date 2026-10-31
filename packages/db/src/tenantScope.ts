@@ -53,6 +53,8 @@ const TENANT_SCOPED_MODELS = new Set([
   "StudentBadge",
   "PgnFolder",
   "PgnFile",
+  "CalendarBlock",
+  "LiveSessionChange",
 ]);
 
 const WHERE_SCOPED_OPERATIONS = new Set([
