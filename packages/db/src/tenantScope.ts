@@ -51,6 +51,8 @@ const TENANT_SCOPED_MODELS = new Set([
   "Certificate",
   "XpEvent",
   "StudentBadge",
+  "PgnFolder",
+  "PgnFile",
 ]);
 
 const WHERE_SCOPED_OPERATIONS = new Set([

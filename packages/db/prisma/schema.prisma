@@ -36,6 +36,8 @@ model Tenant {
   invoices    Invoice[]
   puzzles     Puzzle[]
   classroomScheduleSlots ClassroomScheduleSlot[]
+  pgnFolders  PgnFolder[]
+  pgnFiles    PgnFile[]
 
   @@index([subdomain])
 }
@@ -70,6 +72,8 @@ model User {
   createdInvoices Invoice[]
   recordedRatings RatingRecord[]
   issuedCertificates Certificate[]
+  createdPgnFolders  PgnFolder[] @relation("PgnFoldersCreated")
+  uploadedPgnFiles   PgnFile[]   @relation("PgnFilesUploaded")
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -662,4 +666,85 @@ model StudentBadge {
 
   @@unique([studentId, code])
   @@index([tenantId])
+}
+
+// --- PGN library -----------------------------------------------------------
+// Folders and PGN files a coach keeps for teaching material: opening repertoires,
+// annotated master games, a student's tournament games.
+//
+// File contents live in PgnFile.content rather than object storage. PGN is plain
+// text measured in kilobytes, and keeping it on the row means it inherits the
+// tenant scoping every other model has, so an unshared file is private by the
+// same mechanism that protects an invoice. The alternative here was the R2
+// bucket, which lib/storage/r2Client.ts documents as public-read because
+// certificates need permanent public URLs — exactly the wrong property for
+// coaching material. Downloads go through a route handler that re-checks
+// access, so no storage URL is ever handed out.
+
+model PgnFolder {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  name     String
+
+  // Self-referential tree. A null parent is a root folder.
+  parentId String?
+  parent   PgnFolder?  @relation("PgnFolderTree", fields: [parentId], references: [id])
+  children PgnFolder[] @relation("PgnFolderTree")
+
+  /// Readable by students and parents in this academy. NOT public to the
+  /// internet — there is no unauthenticated path to any of this. An unshared
+  /// folder is staff-only, and that is enforced in the repository query rather
+  /// than by hiding the card.
+  isShared Boolean @default(false)
+
+  /// Manual ordering within a parent. Reserved for drag-to-reorder; until then
+  /// every row keeps its default and listing falls back to name.
+  position Int @default(0)
+
+  createdByUserId String?
+  createdBy       User?    @relation("PgnFoldersCreated", fields: [createdByUserId], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  files PgnFile[]
+
+  // Stops two subfolders of the same parent sharing a name. Postgres treats
+  // NULLs as distinct, so this does NOT constrain root folders — those are
+  // checked in the repository, which has to run anyway to exclude soft-deleted
+  // rows from the comparison.
+  @@unique([tenantId, parentId, name])
+  @@index([tenantId])
+  @@index([parentId])
+}
+
+model PgnFile {
+  id       String    @id @default(cuid())
+  tenantId String
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  folderId String
+  folder   PgnFolder @relation(fields: [folderId], references: [id])
+  name     String
+
+  /// The uploaded text, byte for byte. Never re-serialized from a parse: a
+  /// round trip through any parser drops comments, variations and nonstandard
+  /// tags, and this is somebody's annotated work.
+  content   String
+  sizeBytes Int
+  /// Games found by the parser. Nullable because a file whose structure could
+  /// not be read is still stored rather than rejected.
+  gameCount Int?
+
+  position Int @default(0)
+
+  uploadedByUserId String?
+  uploadedBy       User?    @relation("PgnFilesUploaded", fields: [uploadedByUserId], references: [id])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+
+  @@unique([tenantId, folderId, name])
+  @@index([tenantId])
+  @@index([folderId])
 }
