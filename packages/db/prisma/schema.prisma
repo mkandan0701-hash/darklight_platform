@@ -35,6 +35,7 @@ model Tenant {
   tournaments Tournament[]
   invoices    Invoice[]
   puzzles     Puzzle[]
+  classroomScheduleSlots ClassroomScheduleSlot[]
 
   @@index([subdomain])
 }
@@ -66,6 +67,7 @@ model User {
   coachProfile   CoachProfile?
   studentProfile StudentProfile?
   parentProfile  ParentProfile?
+  createdInvoices Invoice[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -165,8 +167,36 @@ model Classroom {
   students     ClassroomStudent[]
   liveSessions LiveSession[]
   assignments  Assignment[]
+  scheduleSlots ClassroomScheduleSlot[]
 
   @@index([tenantId])
+}
+
+// A recurring weekly time slot for a classroom (e.g. "Saturdays 10:00
+// Asia/Kolkata, 60 min"). Stored in local terms (weekday + HH:mm + IANA zone)
+// rather than a single UTC instant, because a fixed UTC offset silently
+// drifts by an hour whenever the slot's own zone crosses a DST boundary —
+// each occurrence is converted to UTC individually at generation time
+// (packages/shared/src/scheduleSlots.ts), the same way zonedLocalToUtc
+// already handles one-off session scheduling.
+model ClassroomScheduleSlot {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  classroomId  String
+  classroom    Classroom @relation(fields: [classroomId], references: [id])
+  dayOfWeek    Int // luxon convention: 1=Mon..7=Sun
+  localTime    String // "HH:mm", interpreted in `timezone`
+  timezone     String
+  durationMins Int
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  liveSessions LiveSession[]
+
+  @@index([tenantId])
+  @@index([classroomId])
 }
 
 model ClassroomCoach {
@@ -204,10 +234,23 @@ model LiveSession {
   socketRoomId   String        @unique
   status         SessionStatus @default(SCHEDULED)
 
+  // Both null for a manually-scheduled one-off session (the only path before
+  // weekend-first templates existed). Set together when a session is
+  // auto-generated from a ClassroomScheduleSlot. occurrenceDate is the
+  // idempotency key for materialization — the calendar date this occurrence
+  // is *for*, in the slot's own timezone, not scheduledAtUtc's date (which
+  // can differ by a day near midnight in that zone).
+  scheduleSlotId String?
+  scheduleSlot   ClassroomScheduleSlot? @relation(fields: [scheduleSlotId], references: [id])
+  occurrenceDate String?
+
   referenceBoard ReferenceBoard?
   attendance     AttendanceRecord[]
 
   @@index([tenantId])
+  // Postgres treats NULLs as distinct, so manually-scheduled rows (both
+  // fields null) never collide with each other or with template rows.
+  @@unique([scheduleSlotId, occurrenceDate])
 }
 
 enum SessionStatus {
@@ -380,19 +423,26 @@ enum AnalysisStatus {
 // ---------------------------------------------------------------------------
 
 model Invoice {
-  id            String          @id @default(cuid())
-  tenantId      String
-  tenant        Tenant          @relation(fields: [tenantId], references: [id])
-  studentId     String
-  student       StudentProfile  @relation(fields: [studentId], references: [id])
-  amount        Int
-  currency      String
-  provider      PaymentProvider
-  providerRef   String
-  fxRateApplied Float?
-  status        InvoiceStatus   @default(PENDING)
-  dueAtUtc      DateTime
-  paidAtUtc     DateTime?
+  id              String          @id @default(cuid())
+  tenantId        String
+  tenant          Tenant          @relation(fields: [tenantId], references: [id])
+  studentId       String
+  student         StudentProfile  @relation(fields: [studentId], references: [id])
+  amount          Int
+  currency        String
+  provider        PaymentProvider
+  providerRef     String
+  fxRateApplied   Float?
+  status          InvoiceStatus   @default(PENDING)
+  dueAtUtc        DateTime
+  paidAtUtc       DateTime?
+  // "October tuition" — every list/detail view needs this to be usable for a
+  // parent reconciling multiple invoices.
+  description     String?
+  // Audit trail per CLAUDE.md §4 ("coaches and parents need audit trails").
+  // Nullable so it never blocks a write if omitted.
+  createdByUserId String?
+  createdBy       User?           @relation(fields: [createdByUserId], references: [id])
 
   @@unique([provider, providerRef])
   @@index([tenantId])

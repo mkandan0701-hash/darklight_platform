@@ -32,6 +32,7 @@ const TENANT_SCOPED_MODELS = new Set([
   "Classroom",
   "ClassroomCoach",
   "ClassroomStudent",
+  "ClassroomScheduleSlot",
   "LiveSession",
   "ReferenceBoard",
   "AttendanceRecord",
