@@ -68,6 +68,8 @@ model User {
   studentProfile StudentProfile?
   parentProfile  ParentProfile?
   createdInvoices Invoice[]
+  recordedRatings RatingRecord[]
+  issuedCertificates Certificate[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -116,6 +118,8 @@ model StudentProfile {
   invoices       Invoice[]
   ratingRecords  RatingRecord[]
   certificates   Certificate[]
+  xpEvents       XpEvent[]
+  badges         StudentBadge[]
 
   @@index([tenantId])
 }
@@ -541,6 +545,12 @@ model RatingRecord {
   federation    Federation
   rating        Int
   recordedAtUtc DateTime       @default(now())
+  // Who entered this. Manual entry by a coach/admin is the ingestion
+  // mechanism — FIDE/USCF/ECF have no consistent public API worth depending
+  // on, so a scraper would be a fragile dependency for a wedge feature.
+  // Nullable so it never blocks a write, same as Invoice.createdByUserId.
+  recordedByUserId String?
+  recordedBy       User?       @relation(fields: [recordedByUserId], references: [id])
 
   @@index([tenantId])
   @@index([studentId, federation])
@@ -560,6 +570,17 @@ model Certificate {
   type        CertificateType
   pdfUrl      String
   issuedAtUtc DateTime        @default(now())
+  // TOURNAMENT_RESULT is coach-typed free text: Tournament rows don't exist
+  // yet (Wave 4, unbuilt), so there is nothing to derive this from. Persisted
+  // rather than only rendered into the PDF, or the row could never be listed
+  // or re-rendered without parsing the PDF back out. Null for the other two
+  // types, whose content is derived at render time from attendance/ratings.
+  eventName    String?
+  eventResult  String?
+  eventDateUtc DateTime?
+  // Audit trail per claude.md §4, same shape as Invoice.createdByUserId.
+  issuedByUserId String?
+  issuedBy       User?        @relation(fields: [issuedByUserId], references: [id])
 
   @@index([tenantId])
 }
@@ -596,4 +617,49 @@ model DemoBooking {
 
   @@index([slotAtUtc])
   @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// Gamification (classroom-scoped)
+// ---------------------------------------------------------------------------
+// Deliberately not a public ladder: claude.md §9 rules out a chess.com-style
+// rating ladder outside classrooms, so every leaderboard here is drawn inside
+// one classroom, among people who already train together.
+
+model XpEvent {
+  id        String         @id @default(cuid())
+  tenantId  String
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id])
+  kind      XpEventKind
+  points    Int
+  // The thing that earned it — a PuzzleAttempt id, an AttendanceRecord id.
+  // Paired with kind in the unique below, this is what makes awarding
+  // idempotent: re-running the same submission cannot pay out twice.
+  sourceId     String
+  awardedAtUtc DateTime @default(now())
+
+  @@unique([studentId, kind, sourceId])
+  @@index([tenantId])
+  @@index([studentId])
+}
+
+enum XpEventKind {
+  PUZZLE_SOLVED
+  SESSION_ATTENDED
+}
+
+model StudentBadge {
+  id        String         @id @default(cuid())
+  tenantId  String
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id])
+  // A code from lib/gamification/badges.ts rather than an enum: badges are
+  // product copy that will be added to often, and a new one should not need a
+  // migration to hand out.
+  code        String
+  earnedAtUtc DateTime @default(now())
+
+  @@unique([studentId, code])
+  @@index([tenantId])
 }

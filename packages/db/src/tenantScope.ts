@@ -49,6 +49,8 @@ const TENANT_SCOPED_MODELS = new Set([
   "SimulBoard",
   "RatingRecord",
   "Certificate",
+  "XpEvent",
+  "StudentBadge",
 ]);
 
 const WHERE_SCOPED_OPERATIONS = new Set([
