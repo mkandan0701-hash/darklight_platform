@@ -1,6 +1,7 @@
 import { parseFenBoard, type FenPiece } from "../../lib/chess/parseFen";
-import { PIECE_PATHS, type PieceKind } from "./piecePaths";
-import { BOARD, BOARD_LIGHT, INK, SLATE, WHITE } from "../art/palette";
+import type { PieceKind } from "./piecePaths";
+import { CburnettPiece, PIECE_BOX } from "./cburnett";
+import { BOARD, BOARD_LIGHT, INK } from "../art/palette";
 
 // A chess position, drawn as inert SVG.
 //
@@ -87,14 +88,14 @@ export function StaticBoard({
         const col = index % 8;
         const { kind, isWhite } = glyphFor(piece);
         return (
-          <g key={`pc-${i}`} transform={`translate(${col * SQUARE} ${row * SQUARE})`}>
-            <path
-              d={PIECE_PATHS[kind]}
-              fill={isWhite ? WHITE : INK}
-              stroke={isWhite ? SLATE : INK}
-              strokeWidth={3}
-              strokeLinejoin="round"
-            />
+          <g
+            key={`pc-${i}`}
+            // The Cburnett paths are authored in a 45-unit box, so each one is
+            // scaled to fill its square — the same transform react-chessboard
+            // applies. Stroke widths scale with it, by design.
+            transform={`translate(${col * SQUARE} ${row * SQUARE}) scale(${SQUARE / PIECE_BOX})`}
+          >
+            <CburnettPiece kind={kind} isWhite={isWhite} />
           </g>
         );
       })}

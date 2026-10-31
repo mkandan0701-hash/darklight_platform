@@ -14,6 +14,7 @@ export const BOARD_DARK = "#17533A";
 export const BOARD_LIGHT = "#E8F2EC";
 export const GOLD = "#C9A227";
 export const GOLD_LIGHT = "#F6ECC9";
+export const GOLD_DARK = "#8A6D12";
 export const PARCHMENT = "#F7F5EF";
 export const SLATE = "#5B6472";
 export const SLATE_LIGHT = "#E4E2DA";

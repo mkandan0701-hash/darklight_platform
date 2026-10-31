@@ -7,4 +7,14 @@ build/
 *.log
 .turbo/
 packages/db/generated/
+apps/web/generated/
 *.tsbuildinfo
+
+# Playwright (apps/web/e2e) artifacts and QA fixture credentials
+test-results/
+playwright-report/
+qa-fixture.json
+qa-auth-*.json
+
+# Vercel CLI project link
+.vercel
