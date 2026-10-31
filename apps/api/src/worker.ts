@@ -4,7 +4,13 @@
 import type { Worker } from "bullmq";
 import { createPuzzleImportWorker } from "./workers/puzzleImportWorker";
 import { createClassroomScheduleMaterializeWorker } from "./workers/classroomScheduleMaterializeWorker";
-import { classroomScheduleMaterializeQueue } from "./queues";
+import { createChesscomSyncWorker, createLichessSyncWorker } from "./workers/gameSyncWorker";
+import { createGameAnalysisWorker } from "./workers/gameAnalysisWorker";
+import {
+  chesscomSyncQueue,
+  classroomScheduleMaterializeQueue,
+  lichessSyncQueue,
+} from "./queues";
 
 function log(worker: Worker, label: string) {
   worker.on("completed", (job, result) => {
@@ -19,6 +25,9 @@ function log(worker: Worker, label: string) {
 const workers = [
   log(createPuzzleImportWorker(), "puzzle-import"),
   log(createClassroomScheduleMaterializeWorker(), "classroom-schedule-materialize"),
+  log(createLichessSyncWorker(), "lichess-sync"),
+  log(createChesscomSyncWorker(), "chesscom-sync"),
+  log(createGameAnalysisWorker(), "game-analysis"),
 ];
 
 // Registering a repeatable job is idempotent: BullMQ dedupes on
@@ -30,6 +39,19 @@ void (async () => {
     "nightly-sweep",
     {},
     { repeat: { pattern: "0 3 * * *" }, jobId: "nightly-sweep" }
+  );
+
+  // Staggered away from each other and from the 03:00 schedule sweep so the
+  // three nightly jobs don't contend for the same worker at the same minute.
+  await lichessSyncQueue.add(
+    "sweep",
+    {},
+    { repeat: { pattern: "30 3 * * *" }, jobId: "lichess-sweep" }
+  );
+  await chesscomSyncQueue.add(
+    "sweep",
+    {},
+    { repeat: { pattern: "0 4 * * *" }, jobId: "chesscom-sweep" }
   );
 
   console.log(
