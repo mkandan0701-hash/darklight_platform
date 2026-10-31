@@ -45,3 +45,24 @@ describe("requireRole", () => {
     );
   });
 });
+
+describe("requireRoleOrNotFound", () => {
+  // Regression: members/settings/puzzles answered a non-admin with HTTP 500.
+  it("turns a wrong role into Next's not-found signal, not a ForbiddenRoleError", async () => {
+    const { requireRoleOrNotFound } = await import("./requireRole");
+    let thrown: unknown;
+    try {
+      requireRoleOrNotFound(sessionWithRole("STUDENT"), ["ACADEMY_ADMIN"]);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown).not.toBeInstanceOf(ForbiddenRoleError);
+    expect((thrown as { digest?: string }).digest).toBe("NEXT_NOT_FOUND");
+  });
+
+  it("lets an allowed role through", async () => {
+    const { requireRoleOrNotFound } = await import("./requireRole");
+    expect(() => requireRoleOrNotFound(sessionWithRole("ACADEMY_ADMIN"), ["ACADEMY_ADMIN"])).not.toThrow();
+  });
+});

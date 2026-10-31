@@ -11,11 +11,14 @@ import { resolveSubdomain } from "@chessplay-clone/shared";
 export async function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
   const resolved = resolveSubdomain(host, process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "");
+  const demoSubdomain = demoTenantSubdomain(host, resolved.type);
 
   // Always explicitly set-or-clear: never let an inbound client-supplied
   // x-tenant-subdomain header pass through unmodified.
   if (resolved.type === "tenant") {
     request.headers.set("x-tenant-subdomain", resolved.subdomain);
+  } else if (demoSubdomain) {
+    request.headers.set("x-tenant-subdomain", demoSubdomain);
   } else {
     request.headers.delete("x-tenant-subdomain");
   }
@@ -47,6 +50,20 @@ export async function middleware(request: NextRequest) {
   await supabase.auth.getSession();
 
   return response;
+}
+
+// Demo deployments: a bare *.vercel.app URL has no tenant subdomain, so every
+// request there resolves to apex and /dashboard bounces to /signup. When
+// DEMO_TENANT_SUBDOMAIN is set, those hosts are pinned to that one academy so
+// a client demo works without wildcard DNS. Scoped to vercel.app hosts only:
+// a real root domain never matches, so production tenancy is unchanged even
+// if the variable is set there by mistake. Server-only on purpose — not
+// NEXT_PUBLIC_, since nothing in the browser should be able to read or pick it.
+function demoTenantSubdomain(host: string, resolvedType: string): string | null {
+  const demo = process.env.DEMO_TENANT_SUBDOMAIN?.trim().toLowerCase();
+  if (!demo || resolvedType !== "apex") return null;
+  const hostname = (host.split(":")[0] ?? "").toLowerCase();
+  return hostname.endsWith(".vercel.app") ? demo : null;
 }
 
 export const config = {

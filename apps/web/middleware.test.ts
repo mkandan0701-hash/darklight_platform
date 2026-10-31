@@ -107,4 +107,66 @@ describe("middleware", () => {
 
     expect(forwardedHeaders(response).has("x-tenant-subdomain")).toBe(false);
   });
+
+  describe("DEMO_TENANT_SUBDOMAIN", () => {
+    const originalDemo = process.env.DEMO_TENANT_SUBDOMAIN;
+
+    afterEach(() => {
+      if (originalDemo === undefined) delete process.env.DEMO_TENANT_SUBDOMAIN;
+      else process.env.DEMO_TENANT_SUBDOMAIN = originalDemo;
+    });
+
+    const vercelRequest = (extraHeaders: Record<string, string> = {}) =>
+      new NextRequest("https://chessplay-demo.vercel.app/dashboard", {
+        headers: { host: "chessplay-demo.vercel.app", ...extraHeaders },
+      });
+
+    it("pins a vercel.app host to the demo tenant when set", async () => {
+      process.env.DEMO_TENANT_SUBDOMAIN = "demo-academy";
+
+      const response = await middleware(vercelRequest());
+
+      expect(forwardedHeaders(response).get("x-tenant-subdomain")).toBe("demo-academy");
+    });
+
+    it("leaves a vercel.app host as apex when unset", async () => {
+      delete process.env.DEMO_TENANT_SUBDOMAIN;
+
+      const response = await middleware(vercelRequest());
+
+      expect(forwardedHeaders(response).has("x-tenant-subdomain")).toBe(false);
+    });
+
+    it("never remaps the real root domain's apex", async () => {
+      process.env.DEMO_TENANT_SUBDOMAIN = "demo-academy";
+      const request = new NextRequest("https://chessplayclone.com/dashboard", {
+        headers: { host: "chessplayclone.com" },
+      });
+
+      const response = await middleware(request);
+
+      expect(forwardedHeaders(response).has("x-tenant-subdomain")).toBe(false);
+    });
+
+    it("does not override a real tenant subdomain", async () => {
+      process.env.DEMO_TENANT_SUBDOMAIN = "demo-academy";
+      const request = new NextRequest("https://academy1.chessplayclone.com/dashboard", {
+        headers: { host: "academy1.chessplayclone.com" },
+      });
+
+      const response = await middleware(request);
+
+      expect(forwardedHeaders(response).get("x-tenant-subdomain")).toBe("academy1");
+    });
+
+    it("overwrites a client-supplied header with the demo tenant", async () => {
+      process.env.DEMO_TENANT_SUBDOMAIN = "demo-academy";
+
+      const response = await middleware(
+        vercelRequest({ "x-tenant-subdomain": "attacker-controlled-tenant" })
+      );
+
+      expect(forwardedHeaders(response).get("x-tenant-subdomain")).toBe("demo-academy");
+    });
+  });
 });

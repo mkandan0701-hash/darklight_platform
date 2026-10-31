@@ -7,6 +7,7 @@ import { RESERVED_SUBDOMAINS } from "@chessplay-clone/shared";
 import { createSupabaseServerClient } from "../supabase/server";
 import { createSupabaseAdminClient } from "../supabase/admin";
 import { createUserWithProfile } from "../../repositories/userRepository";
+import { MIN_PASSWORD_LENGTH } from "./passwordRules";
 
 type ActionResult<T = undefined> =
   | { ok: true; data: T }
@@ -22,7 +23,7 @@ const SignUpSchema = z.object({
   timezone: z.string().min(1, "Timezone is required"),
   adminEmail: z.string().email("Enter a valid email"),
   adminName: z.string().max(80, "Name is too long").optional(),
-  adminPassword: z.string().min(8, "Password must be at least 8 characters"),
+  adminPassword: z.string().min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`),
 });
 
 export async function signUpAcademy(
@@ -102,7 +103,7 @@ export async function logout() {
 
 const SetPasswordSchema = z
   .object({
-    password: z.string().min(8, "Password must be at least 8 characters"),
+    password: z.string().min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`),
     confirmPassword: z.string().min(1, "Confirm your password"),
   })
   .refine((v) => v.password === v.confirmPassword, {
