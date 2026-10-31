@@ -1,5 +1,5 @@
 import { getCurrentSession } from "../../../../lib/auth/session";
-import { requireRole } from "../../../../lib/auth/requireRole";
+import { requireRoleOrNotFound } from "../../../../lib/auth/requireRole";
 import {
   listParentsAndStudents,
   listParentStudentLinks,
@@ -9,6 +9,7 @@ import { InviteForm } from "./InviteForm";
 import { ParentStudentLinks } from "./ParentStudentLinks";
 import { cardClass } from "../../../../components/ui/Card";
 import { Badge, type BadgeTone } from "../../../../components/ui/Badge";
+import { displayName } from "../../../../lib/displayName";
 import {
   pageHeadingClass,
   tableWrapperClass,
@@ -30,7 +31,7 @@ const ROLE_BADGE_TONE: Record<string, BadgeTone> = {
 
 export default async function MembersPage() {
   const session = await getCurrentSession();
-  requireRole(session, ["ACADEMY_ADMIN"]);
+  requireRoleOrNotFound(session, ["ACADEMY_ADMIN"]);
   const [members, { parents, students }, links] = await Promise.all([
     listTenantMembers(session.tenantId),
     listParentsAndStudents(session.tenantId),
@@ -47,6 +48,7 @@ export default async function MembersPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className={theadRowClass}>
+              <th className={thClass}>Name</th>
               <th className={thClass}>Email</th>
               <th className={thClass}>Role</th>
             </tr>
@@ -54,6 +56,10 @@ export default async function MembersPage() {
           <tbody>
             {members.map((member) => (
               <tr key={member.id} className={tbodyRowClass}>
+                {/* Shows the email local part until they set a name of their
+                    own — never blank, and never a second copy of the address
+                    next to the one in the column beside it. */}
+                <td className={tdClass}>{displayName(member)}</td>
                 <td className={tdClass}>{member.email}</td>
                 <td className={tdClass}>
                   <Badge tone={ROLE_BADGE_TONE[member.role] ?? "neutral"}>

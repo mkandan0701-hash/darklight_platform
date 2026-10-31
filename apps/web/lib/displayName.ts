@@ -1,19 +1,24 @@
+/** The shape every caller already has to hand: a User row, or a slice of one. */
+export type Nameable = { displayName?: string | null; email: string };
+
 /**
- * A person's display name, derived from their email local part.
+ * What to call somebody in the UI.
  *
- * `User` has no name column yet, so every view that names somebody does this.
- * It lives here rather than inline at each call site so that adding
- * `User.displayName` later is one edit plus a backfill, not a hunt through the
- * pages — the parent portal is what made a third copy of it unacceptable.
+ * `User.displayName` is nullable and always will be for accounts created
+ * before it existed — nothing collected a name then, and there is no honest
+ * way to invent one. So the email local part remains the fallback, and every
+ * render goes through here rather than reaching for `.displayName` directly:
+ * a page that did would print an empty space where a child's name goes.
  *
- * Falls back to the full address: an email with an empty local part is not
- * something to render as a blank space where a child's name goes.
+ * Blank and whitespace-only names fall back too. A user who clears the field
+ * on their profile means "I don't want a name set", not "render nothing".
  *
- * The API has its own copy for a different reason — see `displayNameFromEmail`
- * in apps/api/src/socket/authenticate.ts, which exists to keep classmates'
- * addresses out of chat broadcasts. The two should move to packages/shared
- * together; that's a cross-app change and doesn't belong in this PR.
+ * The API has its own copy for a different reason — see `resolveDisplayName`
+ * in apps/api/src/socket/authenticate.ts, which keeps classmates' addresses
+ * out of chat broadcasts. Both should move to packages/shared together.
  */
-export function displayName(email: string): string {
-  return email.split("@")[0] || email;
+export function displayName(user: Nameable): string {
+  const set = user.displayName?.trim();
+  if (set) return set;
+  return user.email.split("@")[0] || user.email;
 }

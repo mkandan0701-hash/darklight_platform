@@ -4,11 +4,17 @@ import { getCurrentSession } from "../../../../../lib/auth/session";
 import { requireRole } from "../../../../../lib/auth/requireRole";
 import { getClassroomForViewer } from "../../../../../repositories/classroomRepository";
 import { listUpcomingSessions } from "../../../../../repositories/liveSessionRepository";
+import { listActiveScheduleSlotsForClassroom } from "../../../../../repositories/scheduleSlotRepository";
+import { getClassroomLeaderboard } from "../../../../../repositories/gamificationRepository";
+import { displayName } from "../../../../../lib/displayName";
 import { formatInZone, nextWeekendLocalDefault } from "../../../../../lib/time";
 import { effectiveSessionStatus, sessionStatusLabel } from "../../../../../lib/liveSession";
 import { CancelSessionButton } from "./CancelSessionButton";
 import { RosterForms } from "./RosterForms";
 import { ScheduleSessionForm } from "./ScheduleSessionForm";
+import { ScheduleSlotForm } from "./ScheduleSlotForm";
+import { RemoveScheduleSlotButton } from "./RemoveScheduleSlotButton";
+import { MeetingLinkForm } from "../MeetingLinkForm";
 import { Card } from "../../../../../components/ui/Card";
 import { EmptyState } from "../../../../../components/ui/EmptyState";
 import { Badge } from "../../../../../components/ui/Badge";
@@ -41,6 +47,9 @@ export default async function ClassroomDetailPage({
   // Staff see the roster; a classmate or another family sees the headcount.
   const canSeeRoster = canSchedule;
   const upcomingSessions = await listUpcomingSessions(session.tenantId, classroom.id);
+  const scheduleSlots = await listActiveScheduleSlotsForClassroom(session.tenantId, classroom.id);
+  const leaderboard = await getClassroomLeaderboard(session.tenantId, classroom.id);
+  const DAY_LABELS = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
   return (
     <div>
@@ -80,6 +89,73 @@ export default async function ClassroomDetailPage({
       </div>
 
       {session.role === "ACADEMY_ADMIN" && <RosterForms classroomId={classroom.id} />}
+
+      {canSchedule && (
+        <section className="mt-8">
+          <h2 className={sectionHeadingClass}>Meeting link</h2>
+          <Card className="mt-3">
+            <MeetingLinkForm classroomId={classroom.id} currentUrl={classroom.meetingUrl} />
+          </Card>
+        </section>
+      )}
+
+      {canSchedule && (
+        <section className="mt-8">
+          <h2 className={sectionHeadingClass}>Weekly schedule</h2>
+
+          {scheduleSlots.length === 0 ? (
+            <div className="mt-3">
+              <EmptyState
+                title="No weekly slots yet"
+                description="Add a recurring time below — upcoming classes are generated automatically, so you don't have to schedule each one by hand."
+              />
+            </div>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {scheduleSlots.map((slot) => (
+                <Card key={slot.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <span className="text-sm text-ink">
+                    {DAY_LABELS[slot.dayOfWeek]} {slot.localTime} {slot.timezone}
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-xs text-slate">{slot.durationMins} min</span>
+                    <RemoveScheduleSlotButton classroomId={classroom.id} scheduleSlotId={slot.id} />
+                  </div>
+                </Card>
+              ))}
+            </ul>
+          )}
+
+          <Card className="mt-4">
+            <ScheduleSlotForm
+              classroomId={classroom.id}
+              timezone={session.timezone}
+              weekendFirst={classroom.weekendFirst}
+              hasExistingSlots={scheduleSlots.length > 0}
+            />
+          </Card>
+        </section>
+      )}
+
+      {leaderboard.length > 0 && (
+        <section className="mt-8">
+          <h2 className={sectionHeadingClass}>Leaderboard</h2>
+          <p className="mt-1 text-xs text-slate">
+            XP from solving puzzles and turning up — counted within this classroom only.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {leaderboard.map((row, index) => (
+              <Card key={row.studentId} className="flex items-center justify-between gap-3 p-4">
+                <span className="text-sm text-ink">
+                  <span className="font-mono text-slate">{index + 1}.</span>{" "}
+                  {displayName(row.user)}
+                </span>
+                <span className="font-mono text-xs text-slate">{row.xp} XP</span>
+              </Card>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="mt-8">
         <h2 className={sectionHeadingClass}>Upcoming sessions</h2>

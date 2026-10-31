@@ -35,6 +35,10 @@ model Tenant {
   tournaments Tournament[]
   invoices    Invoice[]
   puzzles     Puzzle[]
+  classroomScheduleSlots ClassroomScheduleSlot[]
+  pgnFolders  PgnFolder[]
+  pgnFiles    PgnFile[]
+  calendarBlocks CalendarBlock[]
 
   @@index([subdomain])
 }
@@ -47,10 +51,16 @@ enum PlanTier {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  tenantId       String
-  tenant         Tenant    @relation(fields: [tenantId], references: [id])
-  email          String
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  email    String
+  /// What people are called in the UI. Nullable because it can't be
+  /// backfilled: nothing collected a name before this column existed, and
+  /// inventing one from an email address is what `displayName()` already does
+  /// as a fallback. Every render goes through that helper, so a null here is
+  /// a display decision, not a missing value.
+  displayName    String?
   role           Role
   timezone       String
   authProviderId String    @unique
@@ -60,6 +70,13 @@ model User {
   coachProfile   CoachProfile?
   studentProfile StudentProfile?
   parentProfile  ParentProfile?
+  createdInvoices Invoice[]
+  recordedRatings RatingRecord[]
+  issuedCertificates Certificate[]
+  createdPgnFolders  PgnFolder[] @relation("PgnFoldersCreated")
+  uploadedPgnFiles   PgnFile[]   @relation("PgnFilesUploaded")
+  createdCalendarBlocks CalendarBlock[]
+  liveSessionChanges    LiveSessionChange[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -84,6 +101,7 @@ model CoachProfile {
 
   classrooms      ClassroomCoach[]
   referenceBoards ReferenceBoard[]
+  calendarBlocks  CalendarBlock[]
 
   @@index([tenantId])
 }
@@ -108,6 +126,8 @@ model StudentProfile {
   invoices       Invoice[]
   ratingRecords  RatingRecord[]
   certificates   Certificate[]
+  xpEvents       XpEvent[]
+  badges         StudentBadge[]
 
   @@index([tenantId])
 }
@@ -152,6 +172,11 @@ model Classroom {
   tenant       Tenant    @relation(fields: [tenantId], references: [id])
   name         String
   weekendFirst Boolean   @default(true)
+  // A standing video link for the room (Google Meet, Zoom, Teams). Pasted,
+  // not provisioned: a Meet link never expires, so one per classroom covers
+  // every weekly occurrence without an OAuth integration. Live board + audio
+  // remain the native path; this sits beside them, not instead of them.
+  meetingUrl   String?
   createdAt    DateTime  @default(now())
   deletedAt    DateTime?
 
@@ -159,8 +184,42 @@ model Classroom {
   students     ClassroomStudent[]
   liveSessions LiveSession[]
   assignments  Assignment[]
+  scheduleSlots ClassroomScheduleSlot[]
 
   @@index([tenantId])
+}
+
+// A recurring weekly time slot for a classroom (e.g. "Saturdays 10:00
+// Asia/Kolkata, 60 min"). Stored in local terms (weekday + HH:mm + IANA zone)
+// rather than a single UTC instant, because a fixed UTC offset silently
+// drifts by an hour whenever the slot's own zone crosses a DST boundary —
+// each occurrence is converted to UTC individually at generation time
+// (packages/shared/src/scheduleSlots.ts), the same way zonedLocalToUtc
+// already handles one-off session scheduling.
+model ClassroomScheduleSlot {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  classroomId  String
+  classroom    Classroom @relation(fields: [classroomId], references: [id])
+  dayOfWeek    Int // luxon convention: 1=Mon..7=Sun
+  localTime    String // "HH:mm", interpreted in `timezone`
+  timezone     String
+  durationMins Int
+  // First date ("yyyy-LL-dd", in `timezone`) this template may produce an
+  // occurrence for. Null means no lower bound — every slot before the calendar
+  // existed. Set when a weekly repeat starts in the future, and when a series
+  // is split ("this and following"), so the new template doesn't backfill the
+  // weeks the old one still owns.
+  startsOn     String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  liveSessions LiveSession[]
+
+  @@index([tenantId])
+  @@index([classroomId])
 }
 
 model ClassroomCoach {
@@ -198,10 +257,46 @@ model LiveSession {
   socketRoomId   String        @unique
   status         SessionStatus @default(SCHEDULED)
 
+  // When the coach pressed Start. A recorded fact, not a status: nothing has
+  // to come back later and flip it, so it can't go stale the way the old
+  // status column did (see apps/web/lib/liveSession.ts). Its absence after a
+  // session's end is what makes the session "delayed".
+  startedAtUtc   DateTime?
+  // Overrides Classroom.meetingUrl for this one occurrence.
+  meetingUrl     String?
+  updatedAt      DateTime      @default(now()) @updatedAt
+
+  // Both null for a manually-scheduled one-off session (the only path before
+  // weekend-first templates existed). Set together when a session is
+  // auto-generated from a ClassroomScheduleSlot. occurrenceDate is the
+  // idempotency key for materialization — the calendar date this occurrence
+  // is *for*, in the slot's own timezone, not scheduledAtUtc's date (which
+  // can differ by a day near midnight in that zone).
+  scheduleSlotId String?
+  scheduleSlot   ClassroomScheduleSlot? @relation(fields: [scheduleSlotId], references: [id])
+  occurrenceDate String?
+
+  // The IANA zone the session was scheduled in — what its wall-clock time
+  // means to whoever booked it. Nullable because nothing recorded it before
+  // the calendar; readers fall back to the slot's zone, then the viewer's.
+  // Display never uses it: every viewer still sees their own zone.
+  timezone       String?
+  // Groups the occurrences of a finite recurrence ("every Tue/Thu for 10
+  // weeks") created from the calendar, so "this and following" / "whole
+  // series" edits can find their siblings. Open-ended weekly repeats use
+  // scheduleSlotId instead — a session has at most one of the two.
+  seriesId       String?
+
   referenceBoard ReferenceBoard?
   attendance     AttendanceRecord[]
+  changes        LiveSessionChange[]
 
   @@index([tenantId])
+  @@index([tenantId, scheduledAtUtc])
+  @@index([seriesId])
+  // Postgres treats NULLs as distinct, so manually-scheduled rows (both
+  // fields null) never collide with each other or with template rows.
+  @@unique([scheduleSlotId, occurrenceDate])
 }
 
 enum SessionStatus {
@@ -243,6 +338,76 @@ enum AttendanceMode {
   OFFLINE
 }
 
+// Audit trail for schedule changes made to a LiveSession (claude.md §4: coaches
+// and parents need audit trails). One row per change, never updated. Also what
+// lets the calendar label a class "Rescheduled" — the session row alone can't
+// say whether its time is the one people were originally told.
+model LiveSessionChange {
+  id                   String                @id @default(cuid())
+  tenantId             String
+  liveSessionId        String
+  liveSession          LiveSession           @relation(fields: [liveSessionId], references: [id])
+  kind                 LiveSessionChangeKind
+  changedByUserId      String?
+  changedBy            User?                 @relation(fields: [changedByUserId], references: [id])
+  previousStartUtc     DateTime?
+  previousDurationMins Int?
+  newStartUtc          DateTime?
+  newDurationMins      Int?
+  // An admin saved over a detected clash. The summary is the clash as it was
+  // shown to them, so the record explains itself after the other class moves.
+  conflictOverride     Boolean               @default(false)
+  conflictSummary      String?
+  createdAtUtc         DateTime              @default(now())
+
+  @@index([tenantId])
+  @@index([liveSessionId])
+}
+
+enum LiveSessionChangeKind {
+  CREATED
+  RESCHEDULED
+  CANCELLED
+}
+
+// Calendar entries that are not a class, homework, tournament or simul — those
+// already have authoritative rows of their own, and the calendar reads them
+// directly rather than copying them here.
+//   HOLIDAY      academy closed; visible to everyone in the academy.
+//   UNAVAILABLE  one coach's blocked time (coachId); visible to admins and
+//                that coach only, and checked when scheduling their classes.
+//   OTHER        anything else; everyone, or staff only when staffOnly.
+model CalendarBlock {
+  id              String            @id @default(cuid())
+  tenantId        String
+  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  kind            CalendarBlockKind
+  title           String
+  description     String?
+  startsAtUtc     DateTime
+  endsAtUtc       DateTime
+  // The zone it was entered in, so editing shows the same wall clock back.
+  timezone        String
+  allDay          Boolean           @default(false)
+  coachId         String?
+  coach           CoachProfile?     @relation(fields: [coachId], references: [id])
+  staffOnly       Boolean           @default(false)
+  createdByUserId String?
+  createdBy       User?             @relation(fields: [createdByUserId], references: [id])
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @default(now()) @updatedAt
+  deletedAt       DateTime?
+
+  @@index([tenantId, startsAtUtc])
+  @@index([coachId])
+}
+
+enum CalendarBlockKind {
+  HOLIDAY
+  UNAVAILABLE
+  OTHER
+}
+
 model Assignment {
   id          String    @id @default(cuid())
   tenantId    String
@@ -256,6 +421,7 @@ model Assignment {
   puzzleAttempts PuzzleAttempt[]
 
   @@index([tenantId])
+  @@index([tenantId, dueAtUtc])
 }
 
 // ---------------------------------------------------------------------------
@@ -374,19 +540,26 @@ enum AnalysisStatus {
 // ---------------------------------------------------------------------------
 
 model Invoice {
-  id            String          @id @default(cuid())
-  tenantId      String
-  tenant        Tenant          @relation(fields: [tenantId], references: [id])
-  studentId     String
-  student       StudentProfile  @relation(fields: [studentId], references: [id])
-  amount        Int
-  currency      String
-  provider      PaymentProvider
-  providerRef   String
-  fxRateApplied Float?
-  status        InvoiceStatus   @default(PENDING)
-  dueAtUtc      DateTime
-  paidAtUtc     DateTime?
+  id              String          @id @default(cuid())
+  tenantId        String
+  tenant          Tenant          @relation(fields: [tenantId], references: [id])
+  studentId       String
+  student         StudentProfile  @relation(fields: [studentId], references: [id])
+  amount          Int
+  currency        String
+  provider        PaymentProvider
+  providerRef     String
+  fxRateApplied   Float?
+  status          InvoiceStatus   @default(PENDING)
+  dueAtUtc        DateTime
+  paidAtUtc       DateTime?
+  // "October tuition" — every list/detail view needs this to be usable for a
+  // parent reconciling multiple invoices.
+  description     String?
+  // Audit trail per CLAUDE.md §4 ("coaches and parents need audit trails").
+  // Nullable so it never blocks a write if omitted.
+  createdByUserId String?
+  createdBy       User?           @relation(fields: [createdByUserId], references: [id])
 
   @@unique([provider, providerRef])
   @@index([tenantId])
@@ -485,6 +658,12 @@ model RatingRecord {
   federation    Federation
   rating        Int
   recordedAtUtc DateTime       @default(now())
+  // Who entered this. Manual entry by a coach/admin is the ingestion
+  // mechanism — FIDE/USCF/ECF have no consistent public API worth depending
+  // on, so a scraper would be a fragile dependency for a wedge feature.
+  // Nullable so it never blocks a write, same as Invoice.createdByUserId.
+  recordedByUserId String?
+  recordedBy       User?       @relation(fields: [recordedByUserId], references: [id])
 
   @@index([tenantId])
   @@index([studentId, federation])
@@ -504,6 +683,17 @@ model Certificate {
   type        CertificateType
   pdfUrl      String
   issuedAtUtc DateTime        @default(now())
+  // TOURNAMENT_RESULT is coach-typed free text: Tournament rows don't exist
+  // yet (Wave 4, unbuilt), so there is nothing to derive this from. Persisted
+  // rather than only rendered into the PDF, or the row could never be listed
+  // or re-rendered without parsing the PDF back out. Null for the other two
+  // types, whose content is derived at render time from attendance/ratings.
+  eventName    String?
+  eventResult  String?
+  eventDateUtc DateTime?
+  // Audit trail per claude.md §4, same shape as Invoice.createdByUserId.
+  issuedByUserId String?
+  issuedBy       User?        @relation(fields: [issuedByUserId], references: [id])
 
   @@index([tenantId])
 }
@@ -540,4 +730,174 @@ model DemoBooking {
 
   @@index([slotAtUtc])
   @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// Gamification (classroom-scoped)
+// ---------------------------------------------------------------------------
+// Deliberately not a public ladder: claude.md §9 rules out a chess.com-style
+// rating ladder outside classrooms, so every leaderboard here is drawn inside
+// one classroom, among people who already train together.
+
+model XpEvent {
+  id        String         @id @default(cuid())
+  tenantId  String
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id])
+  kind      XpEventKind
+  points    Int
+  // The thing that earned it — a PuzzleAttempt id, an AttendanceRecord id.
+  // Paired with kind in the unique below, this is what makes awarding
+  // idempotent: re-running the same submission cannot pay out twice.
+  sourceId     String
+  awardedAtUtc DateTime @default(now())
+
+  @@unique([studentId, kind, sourceId])
+  @@index([tenantId])
+  @@index([studentId])
+}
+
+enum XpEventKind {
+  PUZZLE_SOLVED
+  SESSION_ATTENDED
+}
+
+model StudentBadge {
+  id        String         @id @default(cuid())
+  tenantId  String
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id])
+  // A code from lib/gamification/badges.ts rather than an enum: badges are
+  // product copy that will be added to often, and a new one should not need a
+  // migration to hand out.
+  code        String
+  earnedAtUtc DateTime @default(now())
+
+  @@unique([studentId, code])
+  @@index([tenantId])
+}
+
+// --- PGN library -----------------------------------------------------------
+// Folders and PGN files a coach keeps for teaching material: opening repertoires,
+// annotated master games, a student's tournament games.
+//
+// File contents live in PgnFile.content rather than object storage. PGN is plain
+// text measured in kilobytes, and keeping it on the row means it inherits the
+// tenant scoping every other model has, so an unshared file is private by the
+// same mechanism that protects an invoice. The alternative here was the R2
+// bucket, which lib/storage/r2Client.ts documents as public-read because
+// certificates need permanent public URLs — exactly the wrong property for
+// coaching material. Downloads go through a route handler that re-checks
+// access, so no storage URL is ever handed out.
+
+model PgnFolder {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  name     String
+
+  // Self-referential tree. A null parent is a root folder.
+  parentId String?
+  parent   PgnFolder?  @relation("PgnFolderTree", fields: [parentId], references: [id])
+  children PgnFolder[] @relation("PgnFolderTree")
+
+  /// Readable by students and parents in this academy. NOT public to the
+  /// internet — there is no unauthenticated path to any of this. An unshared
+  /// folder is staff-only, and that is enforced in the repository query rather
+  /// than by hiding the card.
+  isShared Boolean @default(false)
+
+  /// Manual ordering within a parent. Reserved for drag-to-reorder; until then
+  /// every row keeps its default and listing falls back to name.
+  position Int @default(0)
+
+  createdByUserId String?
+  createdBy       User?    @relation("PgnFoldersCreated", fields: [createdByUserId], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  files PgnFile[]
+
+  // Stops two subfolders of the same parent sharing a name. Postgres treats
+  // NULLs as distinct, so this does NOT constrain root folders — those are
+  // checked in the repository, which has to run anyway to exclude soft-deleted
+  // rows from the comparison.
+  @@unique([tenantId, parentId, name])
+  @@index([tenantId])
+  @@index([parentId])
+}
+
+model PgnFile {
+  id       String    @id @default(cuid())
+  tenantId String
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  folderId String
+  folder   PgnFolder @relation(fields: [folderId], references: [id])
+  name     String
+
+  /// The uploaded text, byte for byte. Never re-serialized from a parse: a
+  /// round trip through any parser drops comments, variations and nonstandard
+  /// tags, and this is somebody's annotated work.
+  content   String
+  sizeBytes Int
+  /// Games found by the parser. Nullable because a file whose structure could
+  /// not be read is still stored rather than rejected.
+  gameCount Int?
+
+  position Int @default(0)
+
+  uploadedByUserId String?
+  uploadedBy       User?    @relation("PgnFilesUploaded", fields: [uploadedByUserId], references: [id])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+
+  @@unique([tenantId, folderId, name])
+  @@index([tenantId])
+  @@index([folderId])
+}
+
+// ---------------------------------------------------------------------------
+// Webhook event ledger
+// ---------------------------------------------------------------------------
+// One row per provider event, so a retried or duplicated delivery is
+// recognised and not processed twice (Stripe and Razorpay both retry, and both
+// may deliver the same event more than once). Platform-level, not tenant-
+// scoped: the tenant is unknown until the event is matched to a row, and some
+// events never are. tenantId records that match when there is one.
+//
+// No payload is stored — event bodies carry customer and payment identifiers.
+// The provider's dashboard keeps the payload; this keeps the outcome.
+model WebhookEvent {
+  id              String             @id @default(cuid())
+  provider        WebhookProvider
+  externalEventId String
+  eventType       String
+  status          WebhookEventStatus @default(PROCESSING)
+  tenantId        String?
+  attempts        Int                @default(1)
+  // A short, non-sensitive classification of the last failure (an error class
+  // or Prisma code), never a message that might quote the payload.
+  errorCode       String?
+  receivedAt      DateTime           @default(now())
+  processedAt     DateTime?
+
+  @@unique([provider, externalEventId])
+  @@index([tenantId])
+  @@index([status, receivedAt])
+}
+
+enum WebhookProvider {
+  STRIPE
+  RAZORPAY
+}
+
+enum WebhookEventStatus {
+  PROCESSING
+  PROCESSED
+  // Verified and recorded, but nothing to do: an event type we don't handle,
+  // or one that matches no invoice.
+  IGNORED
+  FAILED
 }

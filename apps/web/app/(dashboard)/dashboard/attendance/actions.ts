@@ -11,6 +11,7 @@ import {
 } from "../../../../repositories/classroomRepository";
 import { getLiveSession } from "../../../../repositories/liveSessionRepository";
 import { markAttendance } from "../../../../repositories/attendanceRepository";
+import { awardXpSafely } from "../../../../repositories/gamificationRepository";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -84,6 +85,18 @@ export async function markAttendanceAction(formData: FormData): Promise<ActionRe
   }
 
   await markAttendance(session.tenantId, parsed.data.liveSessionId, rows);
+
+  // Only for students actually marked present, and keyed on the session — so
+  // a coach correcting a roster cannot pay the same class out twice, and a
+  // student marked absent earns nothing.
+  for (const row of rows.filter((r) => r.present)) {
+    await awardXpSafely({
+      tenantId: session.tenantId,
+      studentId: row.studentId,
+      kind: "SESSION_ATTENDED",
+      sourceId: parsed.data.liveSessionId,
+    });
+  }
 
   revalidatePath(`/dashboard/attendance/${classroom.id}`);
   revalidatePath(`/dashboard/attendance/${classroom.id}/${parsed.data.liveSessionId}`);

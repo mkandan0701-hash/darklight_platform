@@ -9,6 +9,7 @@ const deleteMany = vi.fn();
 
 const parentProfileFindFirst = vi.fn();
 const studentProfileFindFirst = vi.fn();
+const userUpdateMany = vi.fn();
 
 vi.mock("@chessplay-clone/db", () => ({
   prisma: {
@@ -22,6 +23,7 @@ vi.mock("@chessplay-clone/db", () => ({
     },
     parentProfile: { findFirst: (...a: unknown[]) => parentProfileFindFirst(...a) },
     studentProfile: { findFirst: (...a: unknown[]) => studentProfileFindFirst(...a) },
+    user: { updateMany: (...a: unknown[]) => userUpdateMany(...a) },
   },
 }));
 
@@ -31,6 +33,7 @@ const {
   listStudentsForParent,
   listParentStudentLinks,
   getChildForParent,
+  updateDisplayName,
 } = await import("./userRepository");
 
 const LINK = { tenantId: "tenant_1", parentProfileId: "parent_1", studentProfileId: "student_1" };
@@ -45,6 +48,7 @@ beforeEach(() => {
     deleteMany,
     parentProfileFindFirst,
     studentProfileFindFirst,
+    userUpdateMany,
   ].forEach((m) => m.mockReset());
   findFirst.mockResolvedValue(null);
   findMany.mockResolvedValue([]);
@@ -59,6 +63,8 @@ beforeEach(() => {
 // claude.md §4 forbids deleting user-facing rows: who could see a child's
 // record, and until when, is an audit trail parents and coaches need.
 describe("unlinkParentFromStudent", () => {
+  beforeEach(() => updateMany.mockResolvedValue({ count: 1 }));
+
   it("soft-deletes rather than deleting the row", async () => {
     await unlinkParentFromStudent({ tenantId: "tenant_1", linkId: "ps_1" });
     expect(deleteMany).not.toHaveBeenCalled();
@@ -74,6 +80,14 @@ describe("unlinkParentFromStudent", () => {
     await unlinkParentFromStudent({ tenantId: "tenant_1", linkId: "ps_1" });
     const [args] = updateMany.mock.calls[0] as [{ where: Record<string, unknown> }];
     expect(args.where.deletedAt).toBeNull();
+  });
+
+  // Regression: an id from another academy matched nothing and the action
+  // still reported success. The caller now learns nothing was removed.
+  it("reports whether a link was actually removed", async () => {
+    await expect(unlinkParentFromStudent({ tenantId: "tenant_1", linkId: "ps_1" })).resolves.toBe(true);
+    updateMany.mockResolvedValue({ count: 0 });
+    await expect(unlinkParentFromStudent({ tenantId: "tenant_1", linkId: "ps_foreign" })).resolves.toBe(false);
   });
 });
 
@@ -221,5 +235,40 @@ describe("getChildForParent", () => {
     await getChildForParent(viewer, "student_1");
     const [args] = studentProfileFindFirst.mock.calls[0] as [{ include: Record<string, any> }];
     expect(args.include).toEqual({ user: true });
+  });
+});
+
+// Self-serve renaming. The id comes from the session, never a form field, so
+// the interesting property is that the write can't reach anyone else's row.
+describe("updateDisplayName", () => {
+  function whereOf() {
+    const [args] = userUpdateMany.mock.calls[0] as [{ where: Record<string, any> }];
+    return args.where;
+  }
+  function dataOf() {
+    const [args] = userUpdateMany.mock.calls[0] as [{ data: Record<string, any> }];
+    return args.data;
+  }
+
+  it("scopes the write to this tenant, this user, and a live account", async () => {
+    await updateDisplayName("tenant_1", "user_1", "Dev Iyer");
+    expect(whereOf()).toEqual({ tenantId: "tenant_1", id: "user_1", deletedAt: null });
+  });
+
+  it("stores the trimmed name", async () => {
+    await updateDisplayName("tenant_1", "user_1", "  Dev Iyer  ");
+    expect(dataOf()).toEqual({ displayName: "Dev Iyer" });
+  });
+
+  // Blank and never-set have to be the same stored value, or displayName()'s
+  // emptiness check becomes the only thing keeping a nameless row off screen.
+  it("normalizes a cleared field to null rather than an empty string", async () => {
+    for (const cleared of ["", "   ", null]) {
+      userUpdateMany.mockClear();
+      await updateDisplayName("tenant_1", "user_1", cleared);
+      expect(dataOf(), `${JSON.stringify(cleared)} should store null`).toEqual({
+        displayName: null,
+      });
+    }
   });
 });

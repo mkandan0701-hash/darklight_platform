@@ -14,6 +14,8 @@ import {
 
 export type RosterRow = {
   studentId: string;
+  // Through displayName(), like every other render of a person.
+  name: string;
   email: string;
   present: boolean;
   mode: "ONLINE" | "OFFLINE";
@@ -72,7 +74,8 @@ export function MarkAttendanceForm({
                       FormData omits unchecked boxes entirely, so without this
                       an absent student would look like "not marked". */}
                   <input type="hidden" name="studentIds" value={row.studentId} />
-                  {row.email}
+                  <span className="font-medium">{row.name}</span>
+                  <span className="ml-2 text-xs text-slate">{row.email}</span>
                   {!row.marked && (
                     <span className="ml-2 rounded-full bg-parchment px-2 py-0.5 text-xs text-slate">
                       not marked
@@ -84,7 +87,7 @@ export function MarkAttendanceForm({
                     type="checkbox"
                     name={`present:${row.studentId}`}
                     defaultChecked={row.present}
-                    aria-label={`${row.email} present`}
+                    aria-label={`${row.name} present`}
                     className="h-4 w-4 accent-board"
                   />
                 </td>
@@ -92,7 +95,7 @@ export function MarkAttendanceForm({
                   <select
                     name={`mode:${row.studentId}`}
                     defaultValue={row.mode}
-                    aria-label={`${row.email} attendance mode`}
+                    aria-label={`${row.name} attendance mode`}
                     className={`${fieldInputClass} py-1`}
                   >
                     <option value="ONLINE">Online</option>

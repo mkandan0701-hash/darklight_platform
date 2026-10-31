@@ -1,11 +1,14 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { DateTime } from "luxon";
 import { getCurrentSession } from "../../lib/auth/session";
-import { requireRole } from "../../lib/auth/requireRole";
 import { getTenantBySubdomain } from "../../repositories/tenantRepository";
 import { UnauthorizedError, TenantMismatchError } from "../../lib/auth/errors";
 import { logout } from "../../lib/auth/actions";
-import { DashboardNav } from "../../components/dashboard/DashboardNav";
+import { displayName } from "../../lib/displayName";
+import { AppShell } from "../../components/dashboard/shell/AppShell";
+import { AccountMenu } from "../../components/dashboard/shell/AccountMenu";
+import { ZoneClock } from "../../components/dashboard/shell/ZoneClock";
 
 export default async function DashboardLayout({
   children,
@@ -50,75 +53,30 @@ export default async function DashboardLayout({
     redirect("/set-password");
   }
 
-  const isAdmin = (() => {
-    try {
-      requireRole(session, ["ACADEMY_ADMIN"]);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
-  const canManagePuzzles = (() => {
-    try {
-      requireRole(session, ["ACADEMY_ADMIN", "COACH"]);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
-  // Separate from canManagePuzzles despite the same role set — they gate
-  // unrelated features and will drift apart.
-  const canMarkAttendance = (() => {
-    try {
-      requireRole(session, ["ACADEMY_ADMIN", "COACH"]);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
-  // A parent reads about their child; they don't do homework or play the
-  // engine. Their per-child homework lives on the portal page, and /dashboard
-  // /homework has nothing for them. Note this hides links, it does not gate
-  // routes: /play and /analysis stay reachable by URL and render no tenant
-  // data, so there is nothing there to authorize.
-  const isParent = (() => {
-    try {
-      requireRole(session, ["PARENT"]);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
-  const links = [
-    { href: "/dashboard", label: "Dashboard" },
-    { href: "/dashboard/classrooms", label: "Classrooms" },
-    ...(isParent ? [] : [{ href: "/dashboard/homework", label: "Homework" }]),
-    ...(canMarkAttendance ? [{ href: "/dashboard/attendance", label: "Attendance" }] : []),
-    ...(isParent
-      ? []
-      : [
-          { href: "/dashboard/play", label: "Play" },
-          { href: "/dashboard/analysis", label: "Analysis" },
-        ]),
-    ...(canManagePuzzles ? [{ href: "/dashboard/puzzles", label: "Puzzles" }] : []),
-    ...(isAdmin ? [{ href: "/dashboard/members", label: "Members" }] : []),
-    ...(isAdmin ? [{ href: "/dashboard/settings", label: "Settings" }] : []),
-  ];
-
+  // Which links a role may see now lives in components/dashboard/shell/
+  // navLinks.ts, where the rules are tested without rendering a page. The
+  // boolean ladder this layout used to carry moved there wholesale.
   return (
-    <div className="min-h-screen bg-parchment">
-      <DashboardNav
-        tenantName={tenant.name}
-        logoUrl={tenant.logoUrl}
-        brandColor={tenant.brandColor}
-        links={links}
-        logoutAction={logout}
-      />
-      <main className="mx-auto max-w-5xl px-6 py-8 md:px-8">{children}</main>
-    </div>
+    <AppShell
+      role={session.role}
+      tenantName={tenant.name}
+      logoUrl={tenant.logoUrl}
+      brandColor={tenant.brandColor}
+      header={
+        <>
+          <ZoneClock
+            zone={session.timezone}
+            initialNow={DateTime.now().setZone(session.timezone).toFormat("h:mm a")}
+          />
+          <AccountMenu
+            name={displayName(session)}
+            email={session.email}
+            logoutAction={logout}
+          />
+        </>
+      }
+    >
+      {children}
+    </AppShell>
   );
 }

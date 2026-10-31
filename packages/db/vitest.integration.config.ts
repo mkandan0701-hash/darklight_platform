@@ -7,6 +7,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.integration.test.ts"],
+    // Aborts the run if DATABASE_URL isn't a disposable database. These files
+    // delete rows; this file is shared with prisma migrate and studio.
+    setupFiles: ["./testing/requireDisposableDatabase.ts"],
     // These share one Postgres database. Running files in parallel would let
     // one file's cleanup delete another's fixtures mid-assertion.
     fileParallelism: false,

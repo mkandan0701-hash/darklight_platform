@@ -10,18 +10,34 @@
 //   - Context set: every tenantId found in where/data must equal the
 //     ambient tenant, or the call is refused. This catches both an omitted
 //     filter AND a wrong one (e.g. a value sourced from untrusted input).
-//   - No context set: falls back to a presence-only check (today's
-//     behavior) — doesn't break call sites not yet wired to set context
-//     (e.g. future seed/one-off scripts). A later hardening pass can make
-//     context mandatory once every call site sets it; not done now.
+//   - No context set: in strict mode (requireTenantContext(true) — the API
+//     server and worker turn it on at startup, apps/web when
+//     TENANT_SCOPE_STRICT=1) the call is refused outright. Otherwise it falls
+//     back to a presence-only check, for scripts and any web path not yet
+//     shown to run inside a session.
 //
-// Known gap, left as-is: nested relation writes (e.g.
-// `classroom.create({ data: { coaches: { create: [...] } } })`) aren't
-// separately checked — Prisma's extension `query` hook only fires for the
-// top-level model/operation of a call, not writes nested inside it.
-// Repositories must keep setting tenantId explicitly on nested creates.
+// Nested relation writes (e.g. `classroom.create({ data: { coaches: {
+// create: [...] } } })`, or a `connect` by id) are refused whenever the
+// related model is tenant-scoped. Prisma's `query` hook only fires for the
+// top-level model of a call, so nothing could check the nested row's
+// tenantId — and a `connect` can name another academy's row. Write the
+// related row with its own call instead.
 
 import { getAmbientTenantId } from "./context";
+
+/** model name → relation field name → related model name, from Prisma's DMMF. */
+export type RelationMap = Record<string, Record<string, string>>;
+
+let contextRequired = false;
+
+/**
+ * Strict mode: a query against a tenant-scoped model with no ambient tenant
+ * (runWithTenant / getCurrentSession) is refused instead of falling back to
+ * the presence-only check. Process-wide; call once at startup.
+ */
+export function requireTenantContext(required: boolean): void {
+  contextRequired = required;
+}
 
 const TENANT_SCOPED_MODELS = new Set([
   "User",
@@ -32,6 +48,7 @@ const TENANT_SCOPED_MODELS = new Set([
   "Classroom",
   "ClassroomCoach",
   "ClassroomStudent",
+  "ClassroomScheduleSlot",
   "LiveSession",
   "ReferenceBoard",
   "AttendanceRecord",
@@ -48,6 +65,12 @@ const TENANT_SCOPED_MODELS = new Set([
   "SimulBoard",
   "RatingRecord",
   "Certificate",
+  "XpEvent",
+  "StudentBadge",
+  "PgnFolder",
+  "PgnFile",
+  "CalendarBlock",
+  "LiveSessionChange",
 ]);
 
 const WHERE_SCOPED_OPERATIONS = new Set([
@@ -61,8 +84,33 @@ const WHERE_SCOPED_OPERATIONS = new Set([
   "delete",
   "deleteMany",
   "count",
+  "aggregate",
+  "groupBy",
   "upsert", // upsert's `where` needs the same guard as update/delete
 ]);
+
+// Operations whose payload can carry nested relation writes. createMany and
+// updateMany take scalars only.
+const NESTED_WRITE_OPERATIONS = new Set(["create", "update", "upsert"]);
+
+// Any object on a relation field in a write payload is a nested write: create,
+// connect, connectOrCreate, upsert, set, disconnect, delete... Prisma accepts
+// nothing else there, so no list of keys is needed.
+function findNestedScopedWrite(
+  model: string,
+  data: unknown,
+  relations: RelationMap
+): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const fields = relations[model] ?? {};
+  for (const [field, value] of Object.entries(data as Record<string, unknown>)) {
+    const target = fields[field];
+    if (target && TENANT_SCOPED_MODELS.has(target) && value !== null && typeof value === "object") {
+      return `${model}.${field}`;
+    }
+  }
+  return undefined;
+}
 
 // create's (and upsert's create-branch) tenantId lives in `data`, not `where`.
 const CREATE_DATA_OPERATIONS = new Set(["create", "upsert"]);
@@ -99,7 +147,8 @@ function extractDataTenantId(data: unknown): unknown {
   return (data as Record<string, unknown>).tenantId;
 }
 
-export function tenantScopeExtension() {
+export function tenantScopeExtension(options: { relations?: RelationMap } = {}) {
+  const relations = options.relations ?? {};
   return {
     name: "tenantScope",
     query: {
@@ -109,9 +158,32 @@ export function tenantScopeExtension() {
         // needs to read `args.where`/`args.data` at runtime, not narrow it.
         async $allOperations(params: any) {
           const { model, operation, args, query } = params;
+
+          // Checked for every model, scoped or not: `tenant.create({ data:
+          // { users: { create } } })` reaches a scoped table through an
+          // exempt one.
+          if (NESTED_WRITE_OPERATIONS.has(operation)) {
+            const payloads = operation === "upsert" ? [args?.create, args?.update] : [args?.data];
+            for (const payload of payloads) {
+              const nested = findNestedScopedWrite(model, payload, relations);
+              if (nested) {
+                throw new Error(
+                  `Refusing to run ${model}.${operation}: nested write through ${nested}. ` +
+                    `tenantScope can't check a nested row's tenant — write it with its own call.`
+                );
+              }
+            }
+          }
+
           if (!TENANT_SCOPED_MODELS.has(model)) return query(args);
 
           const ambientTenantId = getAmbientTenantId();
+          if (!ambientTenantId && contextRequired) {
+            throw new Error(
+              `Refusing to run ${model}.${operation} outside a tenant context. ` +
+                `Wrap the unit of work in runWithTenant(), or resolve the session first.`
+            );
+          }
 
           if (WHERE_SCOPED_OPERATIONS.has(operation)) {
             const where = args?.where;
@@ -150,7 +222,9 @@ export function tenantScopeExtension() {
             }
           }
 
-          if (operation === "createMany") {
+          // createManyAndReturn (Prisma 5.14+) takes the same payload; without
+          // it here a bulk insert that also returns rows skipped the guard.
+          if (operation === "createMany" || operation === "createManyAndReturn") {
             const items = Array.isArray(args?.data) ? args.data : [args?.data];
             for (const item of items) {
               const dataTenantId = extractDataTenantId(item);

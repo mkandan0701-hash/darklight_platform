@@ -197,6 +197,18 @@ async function main() {
     const dashboard = await get("/dashboard", cookies);
     check(dashboard.status === 200, "GET /dashboard is 200", `got ${dashboard.status}`);
 
+    // Self-serve profile: every role gets it, unlike /dashboard/settings.
+    check(
+      dashboard.body.includes('href="/dashboard/profile"'),
+      "profile appears in the nav"
+    );
+    const profile = await get("/dashboard/profile", cookies);
+    check(profile.status === 200, "GET /dashboard/profile is 200", `got ${profile.status}`);
+    check(
+      profile.body.includes("Display name"),
+      "profile page renders the display-name field"
+    );
+
     for (const marker of role.markers) {
       check(dashboard.body.includes(marker), `renders "${marker}"`);
     }
@@ -306,6 +318,15 @@ async function main() {
       for (const marker of ["Attendance", "Homework", "Next classes"]) {
         check(ownChild.body.includes(marker), `child page renders "${marker}"`);
       }
+      // The seeded child has a real displayName, so the portal must name them
+      // rather than falling back to the email local part. Asserted in both
+      // directions: "Dev Iyer" present *and* the bare "student" gone, since
+      // the fallback would render the latter and look almost right.
+      check(ownChild.body.includes("Dev Iyer"), "child page uses the child's display name");
+      check(
+        !ownChild.body.includes(">student<"),
+        "child page no longer falls back to the email local part"
+      );
       check(
         !ownChild.body.includes("Application error") && !ownChild.body.includes("digest"),
         "child page has no server-component error boundary"

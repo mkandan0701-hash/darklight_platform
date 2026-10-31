@@ -1,7 +1,8 @@
-import { PrismaClient } from "../generated/client";
-import { tenantScopeExtension } from "./tenantScope";
+import { PrismaClient, Prisma } from "../generated/client";
+import { requireTenantContext, tenantScopeExtension, type RelationMap } from "./tenantScope";
 
-export { runWithTenant, enterTenantContext, getAmbientTenantId } from "./context";
+export { runWithTenant, enterTenantContext, openTenantContext, getAmbientTenantId } from "./context";
+export { requireTenantContext } from "./tenantScope";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
@@ -28,6 +29,22 @@ if (process.env.NODE_ENV !== "production") {
 //      trusting anything from the webhook payload for scoping, then that real
 //      tenantId is used both as the scoping filter and as the ambient tenant
 //      context (via runWithTenant) for the actual scoped update.
-export const prisma = prismaBase.$extends(tenantScopeExtension());
+// src/boundaries.test.ts fails the build if prismaBase or raw SQL appears
+// anywhere else in application code.
+const relations: RelationMap = Object.fromEntries(
+  Prisma.dmmf.datamodel.models.map((model) => [
+    model.name,
+    Object.fromEntries(
+      model.fields.filter((f) => f.kind === "object").map((f) => [f.name, f.type])
+    ),
+  ])
+);
+
+export const prisma = prismaBase.$extends(tenantScopeExtension({ relations }));
+
+// The API server and worker switch strict mode on themselves; apps/web opts in
+// through the environment until every unauthenticated path is known to stay
+// off tenant-scoped models (see .env.example).
+requireTenantContext(process.env.TENANT_SCOPE_STRICT === "1");
 
 export * from "../generated/client";

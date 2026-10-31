@@ -62,3 +62,77 @@ const LABELS: Record<SessionLifecycle, string> = {
 export function sessionStatusLabel(status: SessionLifecycle): string {
   return LABELS[status];
 }
+
+// ---------------------------------------------------------------------------
+// Tabs on the classroom management board.
+//
+// The three clock statuses above can't tell "taught" from "nobody turned up":
+// both read COMPLETED once the end time passes. The board needs that
+// difference — a class that should have happened and didn't is the one a
+// coach has to act on — so it also looks at two recorded facts:
+// LiveSession.startedAtUtc (the coach pressed Start) and whether attendance
+// was marked. Neither is a status that needs flipping later, so this keeps the
+// no-stale-state property described at the top of this file.
+// ---------------------------------------------------------------------------
+
+export type SessionBucket = "CURRENT" | "UPCOMING" | "DELAYED" | "COMPLETED" | "CANCELLED";
+
+export const SESSION_BUCKETS = ["CURRENT", "UPCOMING", "DELAYED", "COMPLETED"] as const;
+
+/** How early a class counts as "current" — long enough to open the room and set up a board. */
+export const CURRENT_LEAD_MINS = 15;
+
+/**
+ * How long an unconfirmed class stays in Delayed before it is filed under
+ * Completed as "unconfirmed". Without a cutoff, every class taught before
+ * startedAtUtc existed would land in Delayed on the day this shipped.
+ */
+export const DELAYED_WINDOW_DAYS = 14;
+
+export type BucketableSession = SessionTiming & { startedAtUtc: Date | null };
+
+export function sessionBucket(
+  session: BucketableSession,
+  facts: { hasAttendance: boolean },
+  now: Date = new Date()
+): SessionBucket {
+  const status = effectiveSessionStatus(session, now);
+  if (status === "CANCELLED") return "CANCELLED";
+  if (status === "LIVE") return "CURRENT";
+  if (status === "SCHEDULED") {
+    const leadMs = CURRENT_LEAD_MINS * 60_000;
+    return session.scheduledAtUtc.getTime() - now.getTime() <= leadMs ? "CURRENT" : "UPCOMING";
+  }
+  // Clock says it's over. Was it actually held?
+  if (session.startedAtUtc || facts.hasAttendance) return "COMPLETED";
+  return isWithinDelayedWindow(session, now) ? "DELAYED" : "COMPLETED";
+}
+
+/** A finished class nobody confirmed — Completed by age, not by evidence. */
+export function isUnconfirmed(
+  session: BucketableSession,
+  facts: { hasAttendance: boolean },
+  now: Date = new Date()
+): boolean {
+  return (
+    sessionBucket(session, facts, now) === "COMPLETED" &&
+    !session.startedAtUtc &&
+    !facts.hasAttendance
+  );
+}
+
+function isWithinDelayedWindow(session: SessionTiming, now: Date): boolean {
+  const durationMs = Math.max(0, session.durationMins || 0) * 60_000;
+  const end = session.scheduledAtUtc.getTime() + durationMs;
+  return now.getTime() - end < DELAYED_WINDOW_DAYS * 86_400_000;
+}
+
+/** Whether the coach may press Start now: the class is current, or overdue and unresolved. */
+export function canStartSession(
+  session: BucketableSession,
+  facts: { hasAttendance: boolean },
+  now: Date = new Date()
+): boolean {
+  const bucket = sessionBucket(session, facts, now);
+  return bucket === "CURRENT" || bucket === "DELAYED";
+}

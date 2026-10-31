@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { prisma } from "@chessplay-clone/db";
+import { prisma, type Prisma } from "@chessplay-clone/db";
 import {
   visibleClassroomWhere,
   type ClassroomViewer,
 } from "./classroomRepository";
+import {
+  CURRENT_LEAD_MINS,
+  DELAYED_WINDOW_DAYS,
+  sessionBucket,
+  type SessionBucket,
+} from "../lib/liveSession";
 
 export async function createLiveSession(input: {
   tenantId: string;
@@ -123,5 +129,187 @@ export async function getLiveSessionForViewer(
       tenantId: viewer.tenantId,
       classroom: visibleClassroomWhere(viewer),
     },
+    // The room's standing meeting link (the session's own override is on the
+    // row) and the attendance fact sessionBucket needs for the Start button.
+    include: {
+      classroom: { select: { meetingUrl: true } },
+      _count: { select: { attendance: true } },
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Classroom management board — every session the viewer can see, across all
+// their classrooms, one tab at a time.
+// ---------------------------------------------------------------------------
+
+const PERSON_SELECT = {
+  select: { id: true, displayName: true, email: true, timezone: true },
+} as const;
+
+const BOARD_INCLUDE = {
+  classroom: {
+    select: {
+      id: true,
+      name: true,
+      meetingUrl: true,
+      coaches: { select: { coachId: true, coach: { select: { user: PERSON_SELECT } } } },
+      students: { select: { studentId: true, student: { select: { user: PERSON_SELECT } } } },
+    },
+  },
+  _count: { select: { attendance: true } },
+} satisfies Prisma.LiveSessionInclude;
+
+export type BoardSession = Prisma.LiveSessionGetPayload<{ include: typeof BOARD_INCLUDE }>;
+
+export type BoardFilters = {
+  bucket: Exclude<SessionBucket, "CANCELLED">;
+  q?: string;
+  classroomId?: string;
+  coachProfileId?: string;
+};
+
+// A ceiling on what one tab renders. Upcoming can run 8 weeks deep per weekly
+// slot (see scheduleSlotRepository), so an academy with many rooms would
+// otherwise render hundreds of cards nobody scrolls to.
+const BOARD_PAGE_SIZE = 60;
+
+// The longest a session can run (scheduleSessionAction caps durationMins at
+// 240). Lets the CURRENT query bound its lower edge without reading duration.
+const MAX_SESSION_MINS = 240;
+
+/**
+ * The coarse time window Postgres can filter on for each tab. The exact
+ * bucket depends on duration, startedAtUtc and attendance, so sessionBucket()
+ * makes the final call on whatever this returns.
+ */
+function bucketWindow(
+  bucket: BoardFilters["bucket"],
+  now: Date
+): { where: Prisma.LiveSessionWhereInput; order: "asc" | "desc" } {
+  const minutes = (n: number) => new Date(now.getTime() + n * 60_000);
+  switch (bucket) {
+    case "CURRENT":
+      return {
+        where: {
+          scheduledAtUtc: { gte: minutes(-MAX_SESSION_MINS), lte: minutes(CURRENT_LEAD_MINS) },
+        },
+        order: "asc",
+      };
+    case "UPCOMING":
+      return { where: { scheduledAtUtc: { gt: minutes(CURRENT_LEAD_MINS) } }, order: "asc" };
+    case "DELAYED":
+      return {
+        where: {
+          startedAtUtc: null,
+          scheduledAtUtc: {
+            gte: minutes(-(DELAYED_WINDOW_DAYS * 24 * 60 + MAX_SESSION_MINS)),
+            lt: now,
+          },
+        },
+        order: "desc",
+      };
+    case "COMPLETED":
+      return { where: { scheduledAtUtc: { lt: now } }, order: "desc" };
+  }
+}
+
+export async function listBoardSessionsForViewer(
+  viewer: ClassroomViewer,
+  filters: BoardFilters,
+  now: Date = new Date()
+): Promise<BoardSession[]> {
+  const { where: windowWhere, order } = bucketWindow(filters.bucket, now);
+  const q = filters.q?.trim();
+
+  const rows = await prisma.liveSession.findMany({
+    where: {
+      tenantId: viewer.tenantId,
+      status: { not: "CANCELLED" },
+      ...windowWhere,
+      ...(filters.classroomId ? { classroomId: filters.classroomId } : {}),
+      // Membership first, then the viewer's narrowing on top of it — the
+      // filters can only shrink what visibleClassroomWhere allows.
+      classroom: {
+        AND: [
+          visibleClassroomWhere(viewer),
+          ...(filters.coachProfileId
+            ? [{ coaches: { some: { coachId: filters.coachProfileId } } }]
+            : []),
+          ...(q
+            ? [
+                {
+                  OR: [
+                    { name: { contains: q, mode: "insensitive" as const } },
+                    {
+                      students: {
+                        some: {
+                          student: {
+                            user: {
+                              OR: [
+                                { displayName: { contains: q, mode: "insensitive" as const } },
+                                { email: { contains: q, mode: "insensitive" as const } },
+                              ],
+                            },
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              ]
+            : []),
+        ],
+      },
+    },
+    include: BOARD_INCLUDE,
+    orderBy: { scheduledAtUtc: order },
+    // Over-fetch: the time window is coarse, and some rows get dropped below.
+    take: BOARD_PAGE_SIZE * 2,
+  });
+
+  return rows
+    .filter(
+      (row) =>
+        sessionBucket(row, { hasAttendance: row._count.attendance > 0 }, now) === filters.bucket
+    )
+    .slice(0, BOARD_PAGE_SIZE);
+}
+
+/**
+ * Records that the coach opened the class. Idempotent: pressing Start twice,
+ * or after a dropped connection, keeps the first time — that's when the class
+ * actually began.
+ */
+export async function markSessionStarted(
+  tenantId: string,
+  liveSessionId: string,
+  at: Date = new Date()
+): Promise<void> {
+  await prisma.liveSession.updateMany({
+    where: { id: liveSessionId, tenantId, startedAtUtc: null },
+    data: { startedAtUtc: at },
+  });
+}
+
+/** null clears the override, so the classroom's standing link applies again. */
+export async function setSessionMeetingUrl(
+  tenantId: string,
+  liveSessionId: string,
+  meetingUrl: string | null
+): Promise<boolean> {
+  const result = await prisma.liveSession.updateMany({
+    where: { id: liveSessionId, tenantId },
+    data: { meetingUrl },
+  });
+  return result.count > 0;
+}
+
+// getLiveSession plus the one fact sessionBucket needs that isn't on the row.
+// Tenant-scoped, not membership-scoped — same contract as getLiveSession.
+export async function getLiveSessionWithAttendanceCount(tenantId: string, liveSessionId: string) {
+  return prisma.liveSession.findFirst({
+    where: { id: liveSessionId, tenantId },
+    include: { _count: { select: { attendance: true } } },
   });
 }

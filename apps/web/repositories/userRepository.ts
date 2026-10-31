@@ -2,40 +2,74 @@ import { prisma } from "@chessplay-clone/db";
 import type { Role } from "@chessplay-clone/shared";
 import { TenantMismatchError } from "../lib/auth/errors";
 
-export async function createUserWithProfile(input: {
+/**
+ * Blank in, null out. A cleared profile field and a never-set one mean the
+ * same thing — fall back to the email local part — and storing "" for one of
+ * them would make `displayName()`'s emptiness check the only thing standing
+ * between a user and a nameless row.
+ */
+function normalizeDisplayName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+/** Self-serve: a user renaming themselves. Scoped so nobody can rename others. */
+export async function updateDisplayName(
+  tenantId: string,
+  userId: string,
+  value: string | null
+) {
+  return prisma.user.updateMany({
+    where: { tenantId, id: userId, deletedAt: null },
+    data: { displayName: normalizeDisplayName(value) },
+  });
+}
+
+export type NewUserInput = {
   tenantId: string;
   email: string;
   role: Role;
   timezone: string;
   authProviderId: string;
-}) {
-  return prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
-      data: {
-        tenantId: input.tenantId,
-        email: input.email,
-        role: input.role,
-        timezone: input.timezone,
-        authProviderId: input.authProviderId,
-      },
-    });
+  /** Optional: an admin inviting someone may not know their name yet. */
+  displayName?: string | null;
+};
 
-    if (input.role === "COACH") {
-      await tx.coachProfile.create({
-        data: { userId: user.id, tenantId: input.tenantId },
-      });
-    } else if (input.role === "STUDENT") {
-      await tx.studentProfile.create({
-        data: { userId: user.id, tenantId: input.tenantId },
-      });
-    } else if (input.role === "PARENT") {
-      await tx.parentProfile.create({
-        data: { userId: user.id, tenantId: input.tenantId },
-      });
-    }
+// A transaction client from prisma.$transaction, so callers that create more
+// than the user (signup creates the Tenant first) can keep it all atomic.
+export type Tx = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
 
-    return user;
+export async function createUserWithProfileTx(tx: Tx, input: NewUserInput) {
+  const user = await tx.user.create({
+    data: {
+      tenantId: input.tenantId,
+      email: input.email,
+      displayName: normalizeDisplayName(input.displayName),
+      role: input.role,
+      timezone: input.timezone,
+      authProviderId: input.authProviderId,
+    },
   });
+
+  if (input.role === "COACH") {
+    await tx.coachProfile.create({
+      data: { userId: user.id, tenantId: input.tenantId },
+    });
+  } else if (input.role === "STUDENT") {
+    await tx.studentProfile.create({
+      data: { userId: user.id, tenantId: input.tenantId },
+    });
+  } else if (input.role === "PARENT") {
+    await tx.parentProfile.create({
+      data: { userId: user.id, tenantId: input.tenantId },
+    });
+  }
+
+  return user;
+}
+
+export async function createUserWithProfile(input: NewUserInput) {
+  return prisma.$transaction((tx) => createUserWithProfileTx(tx, input));
 }
 
 export async function listTenantMembers(tenantId: string) {
@@ -137,11 +171,13 @@ export async function linkParentToStudent(input: {
 // Revoking access is the reads' job, not this write's — listStudentsForParent
 // and the PARENT branch of membershipWhere both exclude deleted links, so an
 // unlinked parent stops seeing the child immediately.
+/** Returns whether a live link was removed — false for an id outside the tenant. */
 export async function unlinkParentFromStudent(input: { tenantId: string; linkId: string }) {
-  await prisma.parentStudent.updateMany({
+  const { count } = await prisma.parentStudent.updateMany({
     where: { tenantId: input.tenantId, id: input.linkId, deletedAt: null },
     data: { deletedAt: new Date() },
   });
+  return count > 0;
 }
 
 // getCurrentSession().id is User.id, but StudentProfile-keyed models
@@ -149,6 +185,18 @@ export async function unlinkParentFromStudent(input: { tenantId: string; linkId:
 // StudentProfile's own id — this resolves one from the other.
 export async function getStudentProfileByUserId(tenantId: string, userId: string) {
   return prisma.studentProfile.findFirst({ where: { tenantId, userId } });
+}
+
+// By StudentProfile id rather than User id — for staff-facing flows that
+// already hold a profile id from a picker (recording a rating, issuing a
+// certificate). Tenant-scoped but NOT viewer-scoped: callers must have
+// established their right to act on this student another way (a role gate).
+// Anything a PARENT can reach must use getChildForParent instead.
+export async function getStudentProfile(tenantId: string, studentProfileId: string) {
+  return prisma.studentProfile.findFirst({
+    where: { id: studentProfileId, tenantId },
+    include: { user: true },
+  });
 }
 
 export async function getCoachProfileByUserId(tenantId: string, userId: string) {
@@ -198,5 +246,42 @@ export async function getChildForParent(
       parents: { some: { parent: { userId: viewer.id }, deletedAt: null } },
     },
     include: { user: true },
+  });
+}
+
+/**
+ * A student's own external chess accounts and federation IDs.
+ *
+ * Scoped by the session's userId rather than a StudentProfile id off the
+ * form, so — like updateDisplayName — there is no id here for a caller to
+ * substitute for somebody else's. Empty strings normalize to null: clearing
+ * a field means "I don't have one", and a stored "" would make the nightly
+ * game sync request an empty handle every night.
+ */
+export async function updateStudentChessAccounts(
+  tenantId: string,
+  userId: string,
+  fields: {
+    lichessHandle: string;
+    chesscomHandle: string;
+    fideId: string;
+    uscfId: string;
+    eclId: string;
+  }
+) {
+  const blankToNull = (value: string) => {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+  };
+
+  return prisma.studentProfile.updateMany({
+    where: { tenantId, userId },
+    data: {
+      lichessHandle: blankToNull(fields.lichessHandle),
+      chesscomHandle: blankToNull(fields.chesscomHandle),
+      fideId: blankToNull(fields.fideId),
+      uscfId: blankToNull(fields.uscfId),
+      eclId: blankToNull(fields.eclId),
+    },
   });
 }

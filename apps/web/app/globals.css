@@ -19,3 +19,15 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* The native <dialog> backdrop. Tailwind's backdrop: variant covers this in
+   newer versions, but this project is on Tailwind 3.4 where ::backdrop is not
+   reliably generated for an arbitrary colour, so it is set once here. */
+dialog::backdrop {
+  background-color: rgb(27 36 48 / 0.45);
+}
+
+/* Modal open means the page behind it does not scroll under the dialog. */
+body:has(dialog[open]) {
+  overflow: hidden;
+}

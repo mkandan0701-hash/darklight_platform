@@ -1,4 +1,5 @@
 import express from "express";
+import { requireTenantContext } from "@chessplay-clone/db";
 import cors from "cors";
 import { createServer } from "node:http";
 import { Server, type Socket } from "socket.io";
@@ -7,9 +8,18 @@ import { createRedisClient } from "./redis";
 import { authenticateSocket, type SocketSessionData } from "./socket/authenticate";
 import { createBoardStore } from "./socket/boardStore";
 import { registerLiveSessionHandlers } from "./socket/rooms";
+import { registerSimulHandlers } from "./socket/simulRooms";
+import { registerTournamentHandlers } from "./socket/tournamentRooms";
+import { startTournamentBroadcaster } from "./socket/tournamentBroadcaster";
 import { stripeWebhookRouter } from "./webhooks/stripe";
 import { razorpayWebhookRouter } from "./webhooks/razorpay";
 import { whatsappWebhookRouter } from "./webhooks/whatsapp";
+import { isAllowedOrigin, isUnconfigured, originPolicyFromEnv } from "./allowedOrigins";
+
+// Every tenant-scoped query in this process runs inside runWithTenant (socket
+// handlers, webhooks, jobs), so one that doesn't is a bug: refuse it rather
+// than fall back to tenantScope's presence-only check.
+requireTenantContext(true);
 
 // Node's default for an unhandled rejection is already to crash, but silently
 // enough that Railway shows a restart with no cause. Logging first is the whole
@@ -24,7 +34,25 @@ process.on("unhandledRejection", (reason, promise) => {
 
 const app = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: "*" } });
+const originPolicy = originPolicyFromEnv();
+// Fails open, loudly: an API deployed without these set would otherwise refuse
+// every browser and take live lessons down with it.
+const checkOrigin = isUnconfigured(originPolicy)
+  ? () => true
+  : (origin: string | undefined) => isAllowedOrigin(origin, originPolicy);
+if (isUnconfigured(originPolicy)) {
+  console.error(
+    "[cors] ROOT_DOMAIN / NEXT_PUBLIC_ROOT_DOMAIN and API_ALLOWED_ORIGINS are all unset: " +
+      "accepting every origin. Set them to restrict who can open a socket."
+  );
+}
+
+const io = new Server(httpServer, {
+  cors: { origin: (origin, callback) => callback(null, checkOrigin(origin)) },
+  // CORS headers don't govern the WebSocket transport; the handshake's Origin
+  // header is checked here instead.
+  allowRequest: (req, callback) => callback(null, checkOrigin(req.headers.origin)),
+});
 
 // Room broadcasts must reach clients held by *other* API instances. Without
 // this, a second Railway instance silently splits every live session in two —
@@ -37,7 +65,26 @@ io.adapter(createAdapter(pubClient, subClient));
 // Authoritative board positions, shared across instances for the same reason.
 const boardStore = createBoardStore(createRedisClient());
 
-app.use(cors());
+// Live tournament pushes originate in apps/web, which has no way to reach this
+// process's io instance. It enqueues; this consumes and re-emits. BullMQ hands
+// each job to exactly one instance, and the redis adapter above fans the emit
+// out to sockets held by all of them — so a viewer gets it once, not once per
+// instance. Unlike the jobs in worker.ts this one belongs in the API process,
+// because the broadcast needs io.
+const tournamentBroadcaster = startTournamentBroadcaster(io);
+// An EventEmitter with no error listener throws, and the handler above turns
+// that into a process exit — so without this a Redis blip would take down
+// every live lesson on this instance to protect a feature nobody would miss.
+// Logged rather than swallowed: a silently dead broadcaster looks exactly
+// like a working one until someone notices the page has stopped updating.
+tournamentBroadcaster.on("error", (err) => {
+  console.error("[tournament-events] broadcaster error:", err);
+});
+tournamentBroadcaster.on("failed", (job, err) => {
+  console.error(`[tournament-events] job ${job?.id} failed:`, err);
+});
+
+app.use(cors({ origin: (origin, callback) => callback(null, checkOrigin(origin)) }));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -65,9 +112,14 @@ io.use(async (socket: Socket, next) => {
 });
 
 io.on("connection", (socket) => {
-  registerLiveSessionHandlers(io, socket as Socket & { data: SocketSessionData }, {
-    boardStore,
-  });
+  const authed = socket as Socket & { data: SocketSessionData };
+  registerLiveSessionHandlers(io, authed, { boardStore });
+  // Simul boards are separate rooms on the same connection: a coach giving an
+  // exhibition holds one socket and sits at every board through it.
+  registerSimulHandlers(io, authed, { boardStore });
+  // Watch-only, and open to anyone in the academy — no board state to sync,
+  // so no boardStore.
+  registerTournamentHandlers(authed);
 });
 
 const port = Number(process.env.API_PORT ?? 4000);

@@ -97,10 +97,18 @@ describe("unlinkParentStudent", () => {
   });
 
   it("unlinks for an admin, scoped to their tenant", async () => {
+    unlinkParentFromStudent.mockResolvedValue(true);
     expect(await unlinkParentStudent("ps_1")).toEqual({ ok: true });
     expect(unlinkParentFromStudent).toHaveBeenCalledWith({
       tenantId: "tenant_1",
       linkId: "ps_1",
     });
+  });
+
+  // Regression: an id from another academy matched nothing and still
+  // reported success.
+  it("reports a link it couldn't find instead of claiming success", async () => {
+    unlinkParentFromStudent.mockResolvedValue(false);
+    expect(await unlinkParentStudent("ps_foreign")).toEqual({ ok: false, error: "That link no longer exists" });
   });
 });

@@ -8,7 +8,11 @@ import {
   effectiveSessionStatus,
   sessionStatusLabel,
 } from "../../../../../../../lib/liveSession";
+import { canStartSession } from "../../../../../../../lib/liveSession";
+import { effectiveMeetingUrl, meetingButtonLabel } from "../../../../../../../lib/meetingLink";
 import { LiveBoard } from "../../../../../../../components/LiveBoard";
+import { StartClassButton } from "../../../StartClassButton";
+import { MeetingLinkForm } from "../../../MeetingLinkForm";
 import { Card } from "../../../../../../../components/ui/Card";
 import {
   pageHeadingClass,
@@ -50,6 +54,14 @@ export default async function LiveSessionPage({
   // join session". Mirror the socket's rule here instead of widening it.
   const canJoinBoard = session.role === "COACH" || session.role === "STUDENT";
 
+  const meetingUrl = effectiveMeetingUrl(liveSession, liveSession.classroom);
+  // Once started, the button has done its job; startSessionAction re-checks
+  // the coach's assignment, so showing it to any COACH here is only a hint.
+  const showStart =
+    session.role === "COACH" &&
+    liveSession.startedAtUtc === null &&
+    canStartSession(liveSession, { hasAttendance: liveSession._count.attendance > 0 });
+
   return (
     <div>
       <h1 className={pageHeadingClass}>
@@ -72,6 +84,25 @@ export default async function LiveSessionPage({
           </>
         )}
       </p>
+
+      {(meetingUrl || showStart) && status !== "CANCELLED" && (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          {showStart && (
+            <StartClassButton classroomId={liveSession.classroomId} liveSessionId={liveSession.id} />
+          )}
+          {meetingUrl && status !== "COMPLETED" && (
+            <a
+              href={meetingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center rounded-lg border border-ink/20 bg-white px-4 py-2 text-sm font-medium text-ink hover:bg-ink/5"
+            >
+              {meetingButtonLabel(meetingUrl)}
+            </a>
+          )}
+        </div>
+      )}
+
       <div className="mt-6">
         {canJoinBoard ? (
           <LiveBoard
@@ -92,6 +123,18 @@ export default async function LiveSessionPage({
           </Card>
         )}
       </div>
+
+      {/* canMarkAttendance is the staff gate; setMeetingUrlAction re-checks the
+          coach's assignment to this room. */}
+      {canMarkAttendance && status !== "CANCELLED" && status !== "COMPLETED" && (
+        <Card className="mt-6">
+          <MeetingLinkForm
+            classroomId={liveSession.classroomId}
+            liveSessionId={liveSession.id}
+            currentUrl={liveSession.meetingUrl}
+          />
+        </Card>
+      )}
     </div>
   );
 }

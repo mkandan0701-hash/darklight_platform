@@ -7,12 +7,14 @@ export const START_FEN = new Chess().fen();
 // sessions don't accumulate in Redis forever. Refreshed on every write.
 const TTL_SECONDS = 60 * 60 * 8;
 
-export type BoardKind = "shared" | "ref";
+// "simul" keys a single board of a simultaneous exhibition, which is the
+// same two-player board shape as a lesson but scoped per SimulBoard row
+// rather than per LiveSession.
+export type BoardKind = "shared" | "ref" | "simul";
 
-export function boardKey(liveSessionId: string, kind: BoardKind): string {
-  return kind === "shared"
-    ? `session:${liveSessionId}:fen`
-    : `session:${liveSessionId}:ref-fen`;
+export function boardKey(boardId: string, kind: BoardKind): string {
+  if (kind === "simul") return `simul:${boardId}:fen`;
+  return kind === "shared" ? `session:${boardId}:fen` : `session:${boardId}:ref-fen`;
 }
 
 // Compare-and-set. Two clients moving at the same instant would otherwise both

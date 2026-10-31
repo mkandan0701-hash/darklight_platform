@@ -59,6 +59,7 @@ async function getOrCreateUser(input: {
   role: Role;
   timezone: string;
   authProviderId: string;
+  displayName?: string;
 }) {
   // Sanctioned unscoped lookup — same exception documented in
   // packages/db/src/index.ts and used by apps/web/lib/auth/session.ts: this
@@ -66,7 +67,19 @@ async function getOrCreateUser(input: {
   const existing = await prismaBase.user.findUnique({
     where: { authProviderId: input.authProviderId },
   });
-  if (existing) return existing;
+  if (existing) {
+    // Backfill only. Accounts seeded before displayName existed would keep
+    // rendering as their email local part forever otherwise, and re-seeding
+    // is how this fixture is refreshed. Never overwrites a name that's
+    // already set — that would undo anything a manual test just changed.
+    if (input.displayName && !existing.displayName) {
+      return prismaBase.user.update({
+        where: { id: existing.id },
+        data: { displayName: input.displayName },
+      });
+    }
+    return existing;
+  }
   return createUserWithProfile(input);
 }
 
@@ -86,6 +99,7 @@ async function main() {
   await getOrCreateUser({
     tenantId: tenant.id,
     email: ADMIN_EMAIL,
+    displayName: "Priya Menon",
     role: "ACADEMY_ADMIN",
     timezone: "Asia/Kolkata",
     authProviderId: adminAuth.id,
@@ -93,6 +107,7 @@ async function main() {
   await getOrCreateUser({
     tenantId: tenant.id,
     email: COACH_EMAIL,
+    displayName: "Asha Rao",
     role: "COACH",
     timezone: "Asia/Kolkata",
     authProviderId: coachAuth.id,
@@ -100,6 +115,7 @@ async function main() {
   const studentUser = await getOrCreateUser({
     tenantId: tenant.id,
     email: STUDENT_EMAIL,
+    displayName: "Dev Iyer",
     role: "STUDENT",
     timezone: "America/New_York",
     authProviderId: studentAuth.id,
@@ -107,6 +123,7 @@ async function main() {
   await getOrCreateUser({
     tenantId: tenant.id,
     email: PARENT_EMAIL,
+    displayName: "Meera Iyer",
     role: "PARENT",
     // A third zone, so the parent dashboard's times are visibly not just a
     // copy of the coach's or the student's.

@@ -81,6 +81,12 @@ jobs:
       - name: Generate Prisma client
         run: npm run db:generate
 
+      # The service container is plain Postgres; the auth-hook migration grants
+      # to roles only Supabase creates.
+      - name: Create Supabase roles
+        run: npx prisma db execute --url "$DIRECT_URL" --file testing/supabaseRoles.sql
+        working-directory: packages/db
+
       # migrate deploy, not db push: this asserts the committed migration files
       # actually apply to an empty database, which is exactly what production
       # does on release and nothing else checks.

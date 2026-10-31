@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { getCurrentSession } from "../../../../../../../lib/auth/session";
-import { requireRole } from "../../../../../../../lib/auth/requireRole";
+import { requireRoleOrNotFound } from "../../../../../../../lib/auth/requireRole";
 import { getStudentProfileByUserId } from "../../../../../../../repositories/userRepository";
 import { getAssignment } from "../../../../../../../repositories/assignmentRepository";
 import { PuzzleAttemptBoard } from "./PuzzleAttemptBoard";
@@ -16,7 +16,7 @@ export default async function PuzzleAttemptPage({
   // role, then re-verify enrollment/puzzle-membership the same way
   // submitPuzzleAttemptAction does server-side, since there's no existing
   // precedent for "does this student have access to this specific resource."
-  requireRole(session, ["STUDENT"]);
+  requireRoleOrNotFound(session, ["STUDENT"]);
 
   const studentProfile = await getStudentProfileByUserId(session.tenantId, session.id);
   if (!studentProfile) notFound();

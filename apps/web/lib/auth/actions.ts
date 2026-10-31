@@ -6,11 +6,14 @@ import { prisma } from "@chessplay-clone/db";
 import { RESERVED_SUBDOMAINS } from "@chessplay-clone/shared";
 import { createSupabaseServerClient } from "../supabase/server";
 import { createSupabaseAdminClient } from "../supabase/admin";
-import { createUserWithProfile } from "../../repositories/userRepository";
+import { createTenantWithAdmin, isSubdomainTakenError } from "../../repositories/tenantRepository";
+import { MIN_PASSWORD_LENGTH } from "./passwordRules";
 
 type ActionResult<T = undefined> =
   | { ok: true; data: T }
   | { ok: false; error: string };
+
+const SUBDOMAIN_TAKEN = "That subdomain is already taken";
 
 const SignUpSchema = z.object({
   academyName: z.string().min(2, "Academy name is required"),
@@ -21,7 +24,8 @@ const SignUpSchema = z.object({
     .refine((v) => !RESERVED_SUBDOMAINS.has(v), { message: "That subdomain is reserved" }),
   timezone: z.string().min(1, "Timezone is required"),
   adminEmail: z.string().email("Enter a valid email"),
-  adminPassword: z.string().min(8, "Password must be at least 8 characters"),
+  adminName: z.string().max(80, "Name is too long").optional(),
+  adminPassword: z.string().min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`),
 });
 
 export async function signUpAcademy(
@@ -31,11 +35,15 @@ export async function signUpAcademy(
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
-  const { academyName, subdomain, timezone, adminEmail, adminPassword } = parsed.data;
+  const { academyName, subdomain, timezone, adminEmail, adminName, adminPassword } =
+    parsed.data;
 
+  // A fast path for the common case, so a taken name is reported before an
+  // auth user is created. Not the guarantee: two signups can both pass this
+  // read, and the unique index settles them inside createTenantWithAdmin.
   const existing = await prisma.tenant.findUnique({ where: { subdomain } });
   if (existing) {
-    return { ok: false, error: "That subdomain is already taken" };
+    return { ok: false, error: SUBDOMAIN_TAKEN };
   }
 
   const supabaseAdmin = createSupabaseAdminClient();
@@ -49,21 +57,22 @@ export async function signUpAcademy(
   }
 
   try {
-    const tenant = await prisma.tenant.create({
-      data: { name: academyName, subdomain, timezone },
-    });
-    await createUserWithProfile({
-      tenantId: tenant.id,
-      email: adminEmail,
-      role: "ACADEMY_ADMIN",
-      timezone,
-      authProviderId: authUser.user.id,
+    await createTenantWithAdmin({
+      tenant: { name: academyName, subdomain, timezone },
+      admin: { email: adminEmail, displayName: adminName, authProviderId: authUser.user.id },
     });
     return { ok: true, data: { subdomain } };
-  } catch {
-    // Postgres and Supabase Auth aren't in one transaction — roll back the
-    // auth user on failure so signup can be retried cleanly from scratch.
-    await supabaseAdmin.auth.admin.deleteUser(authUser.user.id);
+  } catch (err) {
+    // The tenant and admin rows rolled back together; Supabase Auth is outside
+    // that transaction, so its user is undone by hand.
+    const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(authUser.user.id);
+    if (deleteError) {
+      console.error(`signup: orphaned auth user ${authUser.user.id} could not be deleted:`, deleteError);
+    }
+    if (isSubdomainTakenError(err)) {
+      return { ok: false, error: SUBDOMAIN_TAKEN };
+    }
+    console.error("signup: could not create academy:", err);
     return {
       ok: false,
       error: "Could not finish setting up your academy. Please try again.",
@@ -99,7 +108,7 @@ export async function logout() {
 
 const SetPasswordSchema = z
   .object({
-    password: z.string().min(8, "Password must be at least 8 characters"),
+    password: z.string().min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`),
     confirmPassword: z.string().min(1, "Confirm your password"),
   })
   .refine((v) => v.password === v.confirmPassword, {

@@ -3,6 +3,9 @@ import {
   effectiveSessionStatus,
   isUpcoming,
   sessionStatusLabel,
+  sessionBucket,
+  isUnconfirmed,
+  canStartSession,
 } from "./liveSession";
 
 const START = new Date("2026-08-05T10:00:00.000Z");
@@ -100,5 +103,82 @@ describe("sessionStatusLabel", () => {
     expect(sessionStatusLabel("LIVE")).toBe("Live now");
     expect(sessionStatusLabel("COMPLETED")).toBe("Finished");
     expect(sessionStatusLabel("CANCELLED")).toBe("Cancelled");
+  });
+});
+
+describe("sessionBucket", () => {
+  const bucketable = (overrides: Partial<Parameters<typeof sessionBucket>[0]> = {}) => ({
+    ...session(),
+    startedAtUtc: null,
+    ...overrides,
+  });
+  const none = { hasAttendance: false };
+
+  it("is UPCOMING more than 15 minutes before the start", () => {
+    expect(sessionBucket(bucketable(), none, at("2026-08-05T09:44:59.000Z"))).toBe("UPCOMING");
+  });
+
+  it("is CURRENT from 15 minutes before the start", () => {
+    expect(sessionBucket(bucketable(), none, at("2026-08-05T09:45:00.000Z"))).toBe("CURRENT");
+  });
+
+  it("is CURRENT while the class is running, started or not", () => {
+    expect(sessionBucket(bucketable(), none, at("2026-08-05T10:30:00.000Z"))).toBe("CURRENT");
+  });
+
+  it("is DELAYED once it ends without being started or marked", () => {
+    expect(sessionBucket(bucketable(), none, at("2026-08-05T11:00:00.000Z"))).toBe("DELAYED");
+  });
+
+  it("is COMPLETED once ended if the coach started it", () => {
+    const s = bucketable({ startedAtUtc: at("2026-08-05T10:02:00.000Z") });
+    expect(sessionBucket(s, none, at("2026-08-05T11:00:00.000Z"))).toBe("COMPLETED");
+  });
+
+  it("is COMPLETED once ended if attendance was marked instead", () => {
+    expect(
+      sessionBucket(bucketable(), { hasAttendance: true }, at("2026-08-05T11:00:00.000Z"))
+    ).toBe("COMPLETED");
+  });
+
+  it("stops being DELAYED 14 days after the end, and is filed as unconfirmed", () => {
+    const justInside = at("2026-08-19T10:59:59.000Z");
+    const atCutoff = at("2026-08-19T11:00:00.000Z");
+    expect(sessionBucket(bucketable(), none, justInside)).toBe("DELAYED");
+    expect(sessionBucket(bucketable(), none, atCutoff)).toBe("COMPLETED");
+    expect(isUnconfirmed(bucketable(), none, atCutoff)).toBe(true);
+  });
+
+  it("does not call a confirmed class unconfirmed", () => {
+    const s = bucketable({ startedAtUtc: START });
+    expect(isUnconfirmed(s, none, at("2026-09-30T00:00:00.000Z"))).toBe(false);
+  });
+
+  it("is CANCELLED whatever the clock or the evidence says", () => {
+    const s = bucketable({ status: "CANCELLED", startedAtUtc: START });
+    expect(sessionBucket(s, { hasAttendance: true }, at("2026-08-05T10:30:00.000Z"))).toBe(
+      "CANCELLED"
+    );
+  });
+});
+
+describe("canStartSession", () => {
+  const s = { ...session(), startedAtUtc: null };
+  const none = { hasAttendance: false };
+
+  it("refuses a class that is still upcoming", () => {
+    expect(canStartSession(s, none, at("2026-08-05T09:00:00.000Z"))).toBe(false);
+  });
+
+  it("allows a current or delayed class", () => {
+    expect(canStartSession(s, none, at("2026-08-05T09:50:00.000Z"))).toBe(true);
+    expect(canStartSession(s, none, at("2026-08-06T10:00:00.000Z"))).toBe(true);
+  });
+
+  it("refuses a cancelled or already-completed class", () => {
+    expect(canStartSession({ ...s, status: "CANCELLED" }, none, START)).toBe(false);
+    expect(
+      canStartSession(s, { hasAttendance: true }, at("2026-08-06T10:00:00.000Z"))
+    ).toBe(false);
   });
 });

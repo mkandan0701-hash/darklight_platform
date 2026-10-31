@@ -17,6 +17,7 @@ import {
   getAssignment,
   recordPuzzleAttempt,
 } from "../../../../repositories/assignmentRepository";
+import { awardXpSafely } from "../../../../repositories/gamificationRepository";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -156,6 +157,18 @@ export async function submitPuzzleAttemptAction(
     isCorrect,
     timeTakenSecs: parsed.data.timeTakenSecs,
   });
+
+  if (isCorrect) {
+    // Keyed on the puzzle, not the attempt: every attempt is logged (§11), so
+    // keying on the attempt would pay out again each time a student re-solved
+    // a puzzle they had already cracked.
+    await awardXpSafely({
+      tenantId: session.tenantId,
+      studentId: studentProfile.id,
+      kind: "PUZZLE_SOLVED",
+      sourceId: parsed.data.puzzleId,
+    });
+  }
 
   revalidatePath(`/dashboard/homework/${parsed.data.assignmentId}`);
   revalidatePath(`/dashboard/homework/${parsed.data.assignmentId}/puzzle/${parsed.data.puzzleId}`);

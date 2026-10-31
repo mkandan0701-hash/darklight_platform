@@ -20,6 +20,7 @@ import { EmptyState } from "../../../components/ui/EmptyState";
 import { RankProgressBar } from "../../../components/ui/RankProgressBar";
 import { ChildSummaryCard } from "../../../components/dashboard/ChildSummaryCard";
 import { SessionList } from "../../../components/dashboard/SessionList";
+import { AdminDashboard } from "./admin/AdminDashboard";
 import { pageHeadingClass, sectionHeadingClass, textLinkClass } from "../../../components/ui/styles";
 
 // Bounds the per-assignment status queries on the student and parent views —
@@ -28,7 +29,7 @@ const ASSIGNMENT_PREVIEW_LIMIT = 5;
 const SESSION_PREVIEW_LIMIT = 5;
 
 function greeting(session: CurrentSession) {
-  return displayName(session.email);
+  return displayName(session);
 }
 
 /**
@@ -56,8 +57,20 @@ function Stat({ label, value }: { label: string; value: number }) {
   );
 }
 
-export default async function DashboardHomePage() {
+export default async function DashboardHomePage({
+  searchParams,
+}: {
+  searchParams?: { growth?: string };
+}) {
   const session = await getCurrentSession();
+
+  // ---- ACADEMY_ADMIN ----------------------------------------------------
+  // An admin runs the academy, so their landing page is its numbers rather
+  // than the roster a coach needs. The coach branch below is unchanged.
+  if (session.role === "ACADEMY_ADMIN") {
+    return <AdminDashboard session={session} growth={searchParams?.growth} />;
+  }
+
   const heading = (
     <div>
       <h1 className={pageHeadingClass}>Welcome back, {greeting(session)}</h1>
@@ -190,7 +203,7 @@ export default async function DashboardHomePage() {
         const attendance = await getStudentAttendanceSummary(session.tenantId, link.studentId);
         return {
           studentId: link.studentId,
-          name: displayName(link.student.user.email),
+          name: displayName(link.student.user),
           assignmentCount: assignments.length,
           completedCount,
           attendance,
@@ -229,11 +242,11 @@ export default async function DashboardHomePage() {
     );
   }
 
-  // ---- COACH and ACADEMY_ADMIN ------------------------------------------
-  // An admin oversees the academy; a coach sees only rooms they teach — both
-  // come out of the repository's membership filter.
+  // ---- COACH ------------------------------------------------------------
+  // Admins now return above, so this branch is a coach's own rooms, which is
+  // what the repository's membership filter gives them. `isAdmin` used to
+  // widen the copy here and is gone: the compiler proved it was always false.
   const myClassrooms = await listClassroomsForViewer(session);
-  const isAdmin = session.role === "ACADEMY_ADMIN";
 
   const sessions = await listUpcomingSessionsForClassrooms(
     session.tenantId,
@@ -254,7 +267,7 @@ export default async function DashboardHomePage() {
       {heading}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        <Stat label={isAdmin ? "Classrooms" : "Your classrooms"} value={myClassrooms.length} />
+        <Stat label="Your classrooms" value={myClassrooms.length} />
         <Stat label="Students" value={distinctStudents} />
         <Stat label="Coaches" value={distinctCoaches} />
       </div>
@@ -266,34 +279,19 @@ export default async function DashboardHomePage() {
           timezone={session.timezone}
           emptyDescription={
             myClassrooms.length === 0
-              ? isAdmin
-                ? "Create a classroom first, then schedule your first session."
-                : "You're not assigned to a classroom yet. Your academy admin can add you."
+              ? "You're not assigned to a classroom yet. Your academy admin can add you."
               : "Open a classroom to schedule the next session — students see it in their own time zone."
           }
         />
       </section>
 
       <section className="mt-8">
-        <h2 className={sectionHeadingClass}>
-          {isAdmin ? "Classrooms" : "Your classrooms"}
-        </h2>
+        <h2 className={sectionHeadingClass}>Your classrooms</h2>
         {myClassrooms.length === 0 ? (
           <div className="mt-3">
             <EmptyState
-              title={isAdmin ? "No classrooms yet" : "No classrooms assigned"}
-              description={
-                isAdmin
-                  ? "Create your first classroom to start enrolling coaches and students."
-                  : "Your academy admin hasn't assigned you to a classroom yet."
-              }
-              action={
-                isAdmin ? (
-                  <Link href="/dashboard/classrooms" className={textLinkClass}>
-                    Create a classroom
-                  </Link>
-                ) : undefined
-              }
+              title="No classrooms assigned"
+              description="Your academy admin hasn't assigned you to a classroom yet."
             />
           </div>
         ) : (
