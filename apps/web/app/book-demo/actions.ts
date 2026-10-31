@@ -10,14 +10,16 @@ type ActionResult<T = undefined> =
   | { ok: false; error: string };
 
 const BookDemoSchema = z.object({
-  name: z.string().trim().min(1, "Please enter your name"),
-  email: z.string().trim().email("Enter a valid email address"),
+  // Bounded: this is the one write any anonymous visitor can make, and an
+  // unbounded field is an easy way to stuff megabytes into a row.
+  name: z.string().trim().min(1, "Please enter your name").max(120, "That name is too long"),
+  email: z.string().trim().max(254, "That email is too long").email("Enter a valid email address"),
   academyName: z.string().trim().max(200).optional(),
   studentCount: z.string().trim().max(50).optional(),
   notes: z.string().trim().max(2000).optional(),
   // ISO instant of the chosen slot, as produced by the picker.
   slotIso: z.string().datetime({ message: "Pick a time slot" }),
-  timezone: z.string().trim().min(1, "Pick a timezone"),
+  timezone: z.string().trim().min(1, "Pick a timezone").max(64),
 });
 
 export async function bookDemoAction(formData: FormData): Promise<ActionResult> {
