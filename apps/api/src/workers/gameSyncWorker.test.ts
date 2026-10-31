@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { syncStudent } from "./gameSyncWorker";
 
 vi.mock("../queues", () => ({ connection: {}, lichessSyncQueue: {}, chesscomSyncQueue: {} }));
 
@@ -15,8 +16,6 @@ vi.mock("../games/gameSync", () => ({
 const fetchLichessGames = vi.fn();
 vi.mock("../games/lichessGameSync", () => ({ fetchLichessGames: (...a: unknown[]) => fetchLichessGames(...a) }));
 vi.mock("../games/chesscomGameSync", () => ({ fetchChesscomGames: vi.fn() }));
-
-const { syncStudent } = await import("./gameSyncWorker");
 
 beforeEach(() => {
   vi.clearAllMocks();
