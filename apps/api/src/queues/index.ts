@@ -29,3 +29,9 @@ export const classroomScheduleMaterializeQueue = new Queue(
   "classroom-schedule-materialize",
   { connection }
 );
+
+// Note: the "tournament-events" queue is deliberately *not* declared here.
+// Nothing in this service produces onto it — apps/web does — and its consumer
+// lives in the API server process rather than the worker process, because
+// re-emitting into a Socket.io room needs the `io` instance. See
+// socket/tournamentBroadcaster.ts, which owns the queue name.
