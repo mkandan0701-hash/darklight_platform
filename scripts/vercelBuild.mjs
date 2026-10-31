@@ -13,6 +13,7 @@
 // unconditional rather than postinstall-only.
 
 import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
 
 const step = (label, command, args) => {
   console.log(`\n▸ ${label}`);
@@ -51,6 +52,25 @@ if (process.env.VERCEL_ENV === "production") {
 // resolution failure, not a type error.
 step("build @chessplay-clone/db", "npm", ["run", "build", "-w", "packages/db"]);
 step("build @chessplay-clone/shared", "npm", ["run", "build", "-w", "packages/shared"]);
+// Copy the Prisma query engine to one of the fixed paths Prisma probes at
+// runtime. The generated client is inlined into webpack chunks (via
+// transpilePackages), so it can no longer find packages/db/generated/client
+// relative to itself. next.config.js's outputFileTracingIncludes ships this
+// folder with every serverless function.
+console.log("\n▸ copy Prisma engine into apps/web/generated/client");
+const engineSrc = "packages/db/generated/client";
+const engineDest = "apps/web/generated/client";
+mkdirSync(engineDest, { recursive: true });
+const engineFiles = readdirSync(engineSrc).filter(
+  (f) => f.endsWith(".node") || f === "schema.prisma"
+);
+if (!engineFiles.some((f) => f.endsWith(".node"))) {
+  console.error(`\n✗ no Prisma query engine found in ${engineSrc}`);
+  process.exit(1);
+}
+for (const f of engineFiles) copyFileSync(`${engineSrc}/${f}`, `${engineDest}/${f}`);
+console.log(`  copied ${engineFiles.join(", ")}`);
+
 step("build @chessplay-clone/web", "npm", ["run", "build", "-w", "apps/web"]);
 
 console.log("\n✓ build complete");

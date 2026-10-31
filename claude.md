@@ -47,11 +47,14 @@ under Next 14's webpack 5 — a custom webpack block in an otherwise clean
 data channels, so the abstraction was worth roughly forty lines of offer/answer
 handling. The implementation is in `apps/web/lib/audio/`.
 
-**Audio is STUN-only today.** There is no TURN relay, so connections behind
-symmetric NAT or a restrictive corporate firewall will fail — realistically
-10–20%, and this product's traffic is India↔US home and office networks. Adding
-TURN (coturn on Railway, or Cloudflare Calls) is a known cost decision, not an
-oversight. See `apps/web/lib/audio/iceServers.ts`.
+**Audio uses STUN plus a TURN relay.** STUN alone can't traverse symmetric NAT
+or a restrictive corporate firewall — realistically 10–20% of connections, and
+this product's traffic is India↔US home and office networks. TURN credentials
+are minted server-side in `apps/web/lib/audio/actions.ts` (never in a
+`NEXT_PUBLIC_` variable, or any visitor could bill us for relay bandwidth), and
+`stunOnlyIceServers()` in `iceServers.ts` is the degraded fallback when the
+client can't reach that server action. Configured via `TURN_URLS`,
+`TURN_SECRET`, `TURN_TTL_SECONDS`.
 
 ---
 
@@ -237,6 +240,8 @@ Store API keys in Railway environment variables. Never in code, never in Git.
 - **Hardcoding INR or USD.** All money uses the `currency` field. Never assume.
 - **Copying Chesslang/ChessPlay UI 1:1.** Take inspiration, but the diaspora UX is different — different scheduling defaults, different report emphasis, different parent role.
 - **Skipping the "log every attempt" behavior on puzzles.** This is a core differentiator vs generic chess trainers. Log every move a student tries, even the wrong ones.
+- **Running a second Next process against `apps/web` while `next dev` is up.** `next build`, `next start` and a second `next dev` all share `apps/web/.next`. A new one cleans it on startup, and the server already running keeps serving HTML that links CSS and font files that no longer exist. Every page then renders as unstyled HTML in browser-default fonts, and nothing logs an error. Stop dev first. To recover, stop every Next process, `rm -rf apps/web/.next`, and start one dev server.
+- **Running the full e2e set in one invocation.** `auth.spec`'s logout test signs coachA out, and Supabase's `signOut()` revokes *all* of that user's sessions, including the saved storage state `journey.spec` reuses. `journey.spec` also needs a freshly seeded tenant, because a second run hits its own clash. Run `auth.spec` separately, after the others.
 
 ---
 

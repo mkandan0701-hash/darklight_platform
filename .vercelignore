@@ -1,0 +1,18 @@
+# Keep local-only files out of `vercel deploy` uploads. Env vars are set on
+# the Vercel project, never uploaded from disk.
+node_modules
+**/node_modules
+**/.next
+**/dist
+.env
+**/.env
+**/.env.local
+**/.env.*.local
+*.log
+**/*.tsbuildinfo
+**/test-results
+**/playwright-report
+**/qa-fixture.json
+**/qa-auth-*.json
+packages/db/generated
+.vercel

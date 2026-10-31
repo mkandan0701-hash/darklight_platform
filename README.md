@@ -211,6 +211,12 @@ marketing site and `/signup` work, `/dashboard` redirects to `/signup` because n
 `Tenant` resolves from the host, and invites are refused outright with *"Invites
 need a tenant subdomain"*.
 
+**Demo deployments only:** set `DEMO_TENANT_SUBDOMAIN` (e.g. `demo-academy`) on
+the Vercel project and `apps/web/middleware.ts` pins every `*.vercel.app`
+request to that one academy, so a client demo works without wildcard DNS.
+It only affects `*.vercel.app` hosts, never the real root domain. Invites and
+signup still need a real domain.
+
 DNS records:
 
 | Record | Name | Value |

@@ -30,6 +30,16 @@ const nextConfig = {
     // system folders (observed on Windows: `C:\Users\<user>\Application Data`,
     // `C:\Users\<user>\Cookies`).
     outputFileTracingRoot: path.join(__dirname, "../.."),
+    // Prisma's query engine is a native .node file that tracing can't see:
+    // transpilePackages inlines the generated client into webpack chunks, so
+    // Prisma loses its own __dirname and only probes fixed paths — one of
+    // which is apps/web/generated/client. scripts/vercelBuild.mjs copies the
+    // engine there before `next build`; this ships it with every function.
+    // Without it every DB-backed page 500s on Vercel with "could not locate
+    // the Query Engine for runtime rhel-openssl-3.0.x".
+    outputFileTracingIncludes: {
+      "/**": ["./generated/client/**/*"],
+    },
     serverActions: {
       // Coaches can upload multi-game PGN puzzle sets larger than the 1MB default.
       bodySizeLimit: "5mb",
