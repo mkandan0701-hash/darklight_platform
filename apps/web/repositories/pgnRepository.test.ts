@@ -248,6 +248,7 @@ describe("deleting", () => {
   });
 
   it("stamps the whole subtree in one transaction", async () => {
+    folderFindFirst.mockResolvedValue({ id: "root" });
     folderFindMany.mockResolvedValueOnce([{ id: "child" }]).mockResolvedValue([]);
     await deleteFolder("t1", "root");
     // One transaction, so a crash cannot leave a half-deleted branch where the
@@ -260,6 +261,14 @@ describe("deleting", () => {
 });
 
 describe("cross-academy protection", () => {
+  // Regression: the subtree walk starts from whatever id it is given, so a
+  // foreign folder id "deleted" nothing and the action reported success.
+  it("refuses to delete another academy's folder", async () => {
+    folderFindFirst.mockResolvedValue(null);
+    await expect(deleteFolder("t1", "foreign")).rejects.toThrow(/not in your academy/i);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it("refuses to create a folder under another academy's parent", async () => {
     folderFindFirst.mockResolvedValue(null);
     await expect(

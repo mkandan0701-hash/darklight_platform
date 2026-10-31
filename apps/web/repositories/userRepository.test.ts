@@ -63,6 +63,8 @@ beforeEach(() => {
 // claude.md §4 forbids deleting user-facing rows: who could see a child's
 // record, and until when, is an audit trail parents and coaches need.
 describe("unlinkParentFromStudent", () => {
+  beforeEach(() => updateMany.mockResolvedValue({ count: 1 }));
+
   it("soft-deletes rather than deleting the row", async () => {
     await unlinkParentFromStudent({ tenantId: "tenant_1", linkId: "ps_1" });
     expect(deleteMany).not.toHaveBeenCalled();
@@ -78,6 +80,14 @@ describe("unlinkParentFromStudent", () => {
     await unlinkParentFromStudent({ tenantId: "tenant_1", linkId: "ps_1" });
     const [args] = updateMany.mock.calls[0] as [{ where: Record<string, unknown> }];
     expect(args.where.deletedAt).toBeNull();
+  });
+
+  // Regression: an id from another academy matched nothing and the action
+  // still reported success. The caller now learns nothing was removed.
+  it("reports whether a link was actually removed", async () => {
+    await expect(unlinkParentFromStudent({ tenantId: "tenant_1", linkId: "ps_1" })).resolves.toBe(true);
+    updateMany.mockResolvedValue({ count: 0 });
+    await expect(unlinkParentFromStudent({ tenantId: "tenant_1", linkId: "ps_foreign" })).resolves.toBe(false);
   });
 });
 

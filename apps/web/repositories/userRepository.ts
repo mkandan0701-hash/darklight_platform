@@ -171,11 +171,13 @@ export async function linkParentToStudent(input: {
 // Revoking access is the reads' job, not this write's — listStudentsForParent
 // and the PARENT branch of membershipWhere both exclude deleted links, so an
 // unlinked parent stops seeing the child immediately.
+/** Returns whether a live link was removed — false for an id outside the tenant. */
 export async function unlinkParentFromStudent(input: { tenantId: string; linkId: string }) {
-  await prisma.parentStudent.updateMany({
+  const { count } = await prisma.parentStudent.updateMany({
     where: { tenantId: input.tenantId, id: input.linkId, deletedAt: null },
     data: { deletedAt: new Date() },
   });
+  return count > 0;
 }
 
 // getCurrentSession().id is User.id, but StudentProfile-keyed models

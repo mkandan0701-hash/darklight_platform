@@ -143,7 +143,8 @@ export async function unlinkParentStudent(linkId: string): Promise<ActionResult>
     return { ok: false, error: "Only academy admins can remove this link" };
   }
 
-  await unlinkParentFromStudent({ tenantId: session.tenantId, linkId });
+  const removed = await unlinkParentFromStudent({ tenantId: session.tenantId, linkId });
+  if (!removed) return { ok: false, error: "That link no longer exists" };
   revalidatePath("/dashboard/members");
   return { ok: true };
 }

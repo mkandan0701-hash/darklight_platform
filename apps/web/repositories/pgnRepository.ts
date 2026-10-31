@@ -284,6 +284,14 @@ export async function countFolderContents(
  * stamped in one transaction so a half-deleted branch cannot survive a crash.
  */
 export async function deleteFolder(tenantId: string, folderId: string) {
+  // The subtree walk starts from the id it is given, found or not, so an id
+  // from another academy would otherwise "delete" nothing and report success.
+  const folder = await prisma.pgnFolder.findFirst({
+    where: { id: folderId, tenantId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!folder) throw new TenantMismatchError("That folder is not in your academy");
+
   const subtree = await collectSubtree(tenantId, folderId);
   const deletedAt = new Date();
 
