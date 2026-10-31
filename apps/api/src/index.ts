@@ -14,6 +14,7 @@ import { startTournamentBroadcaster } from "./socket/tournamentBroadcaster";
 import { stripeWebhookRouter } from "./webhooks/stripe";
 import { razorpayWebhookRouter } from "./webhooks/razorpay";
 import { whatsappWebhookRouter } from "./webhooks/whatsapp";
+import { isAllowedOrigin, isUnconfigured, originPolicyFromEnv } from "./allowedOrigins";
 
 // Every tenant-scoped query in this process runs inside runWithTenant (socket
 // handlers, webhooks, jobs), so one that doesn't is a bug: refuse it rather
@@ -33,7 +34,25 @@ process.on("unhandledRejection", (reason, promise) => {
 
 const app = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: "*" } });
+const originPolicy = originPolicyFromEnv();
+// Fails open, loudly: an API deployed without these set would otherwise refuse
+// every browser and take live lessons down with it.
+const checkOrigin = isUnconfigured(originPolicy)
+  ? () => true
+  : (origin: string | undefined) => isAllowedOrigin(origin, originPolicy);
+if (isUnconfigured(originPolicy)) {
+  console.error(
+    "[cors] ROOT_DOMAIN / NEXT_PUBLIC_ROOT_DOMAIN and API_ALLOWED_ORIGINS are all unset: " +
+      "accepting every origin. Set them to restrict who can open a socket."
+  );
+}
+
+const io = new Server(httpServer, {
+  cors: { origin: (origin, callback) => callback(null, checkOrigin(origin)) },
+  // CORS headers don't govern the WebSocket transport; the handshake's Origin
+  // header is checked here instead.
+  allowRequest: (req, callback) => callback(null, checkOrigin(req.headers.origin)),
+});
 
 // Room broadcasts must reach clients held by *other* API instances. Without
 // this, a second Railway instance silently splits every live session in two —
@@ -65,7 +84,7 @@ tournamentBroadcaster.on("failed", (job, err) => {
   console.error(`[tournament-events] job ${job?.id} failed:`, err);
 });
 
-app.use(cors());
+app.use(cors({ origin: (origin, callback) => callback(null, checkOrigin(origin)) }));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

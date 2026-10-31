@@ -72,4 +72,22 @@ describe("verifySupabaseJwt", () => {
       "JWT is missing required tenant_id/role claims"
     );
   });
+// Pinned to HS256. Another HMAC algorithm keyed with the same secret would
+  // verify without the pin; "none" carries no signature at all.
+  it("rejects a token signed with the right secret but another algorithm", () => {
+    const token = jwt.sign({ sub: "user_1", tenant_id: "tenant_1", role: "COACH" }, SECRET, {
+      algorithm: "HS512",
+    });
+
+    expect(() => verifySupabaseJwt(token)).toThrow(/invalid algorithm/);
+  });
+
+  it("rejects an unsigned token", () => {
+    const token = jwt.sign({ sub: "user_1", tenant_id: "tenant_1", role: "COACH" }, "", {
+      algorithm: "none",
+    });
+
+    expect(() => verifySupabaseJwt(token)).toThrow();
+  });
 });
+

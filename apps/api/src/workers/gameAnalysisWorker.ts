@@ -6,7 +6,9 @@
 
 import { Worker, type Job } from "bullmq";
 import { runWithTenant } from "@chessplay-clone/db";
+import { gameAnalysisJobSchema, type GameAnalysisJobData } from "@chessplay-clone/shared";
 import { connection } from "../queues";
+import { parseJob } from "../queues/payloads";
 import { analyzeGame, resolveStudentColor, DEFAULT_DEPTH } from "../analysis/analyzeGame";
 import { StockfishEngine } from "../analysis/stockfishEngine";
 import {
@@ -15,12 +17,6 @@ import {
   findGameForAnalysis,
   startAnalysis,
 } from "../repositories/gameAnalysisRepository";
-
-export interface GameAnalysisJobData {
-  tenantId: string;
-  gameId: string;
-  depth?: number;
-}
 
 async function runAnalysis(data: GameAnalysisJobData) {
   const depth = data.depth ?? DEFAULT_DEPTH;
@@ -78,7 +74,7 @@ async function runAnalysis(data: GameAnalysisJobData) {
 export function createGameAnalysisWorker() {
   return new Worker(
     "game-analysis",
-    (job: Job<GameAnalysisJobData>) => runAnalysis(job.data),
+    (job: Job) => runAnalysis(parseJob(gameAnalysisJobSchema, job.data, "game-analysis")),
     {
       connection,
       // One engine process at a time: Stockfish will happily eat every core

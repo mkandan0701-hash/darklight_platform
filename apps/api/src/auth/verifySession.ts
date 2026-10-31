@@ -12,7 +12,9 @@ export function verifySupabaseJwt(token: string): AuthedSession {
     throw new Error("SUPABASE_JWT_SECRET is not set");
   }
 
-  const payload = jwt.verify(token, secret) as Record<string, unknown>;
+  // Pinned: the secret only ever signs HS256, so no other algorithm a token
+  // names in its own header is one to try.
+  const payload = jwt.verify(token, secret, { algorithms: ["HS256"] }) as Record<string, unknown>;
   const userId = payload.sub;
   const tenantId = payload["tenant_id"];
   const role = payload["role"];

@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import { DEFAULT_JOB_OPTIONS, gameAnalysisJobSchema } from "@chessplay-clone/shared";
 import { withEnqueueTimeout } from "./enqueueTimeout";
 
 // apps/web enqueues straight onto the same BullMQ queue apps/api's worker
@@ -19,6 +20,7 @@ export function gameAnalysisQueue(): Queue {
   if (!queue) {
     queue = new Queue("game-analysis", {
       connection: { url: process.env.REDIS_URL ?? "redis://localhost:6379" },
+      defaultJobOptions: DEFAULT_JOB_OPTIONS,
     });
   }
   return queue;
@@ -33,7 +35,9 @@ export async function enqueueGameAnalysis(input: {
   // analysis button spinning until the request itself timed out.
   await withEnqueueTimeout(
     "game-analysis",
-    gameAnalysisQueue().add("analyze", input, {
+    // Parsed with the worker's own schema, so a bad payload fails here, in
+    // front of the coach, not later in the worker.
+    gameAnalysisQueue().add("analyze", gameAnalysisJobSchema.parse(input), {
       // One in-flight analysis per game: a coach clicking twice, or two
       // coaches clicking at once, must not run Stockfish over the same game
       // twice.

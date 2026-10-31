@@ -44,6 +44,23 @@ export async function persistSyncedGames(
   return { imported: result.count };
 }
 
+/**
+ * The student's current handle for this provider, or null when the student
+ * isn't in this tenant or has no handle. Call inside runWithTenant.
+ */
+export async function findSyncHandle(
+  tenantId: string,
+  studentId: string,
+  source: GameSource
+): Promise<string | null> {
+  const student = await prisma.studentProfile.findFirst({
+    where: { id: studentId, tenantId },
+    select: { lichessHandle: true, chesscomHandle: true },
+  });
+  const handle = source === "LICHESS" ? student?.lichessHandle : student?.chesscomHandle;
+  return handle?.trim() || null;
+}
+
 /** The newest game already stored, so a re-sync only asks for what's new. */
 export async function latestPlayedAt(
   tenantId: string,
