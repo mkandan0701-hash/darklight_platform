@@ -31,6 +31,12 @@ jobs:
       - name: Generate Prisma client
         run: npm run db:generate
 
+      # The apps import @chessplay-clone/db and /shared through their package
+      # entry points (dist/), which a fresh checkout doesn't have. A laptop
+      # always does, from an earlier build, so nothing failed locally.
+      - name: Build shared packages
+        run: npm run build -w packages/db && npm run build -w packages/shared
+
       - name: Test
         run: npm run test
 
@@ -80,6 +86,9 @@ jobs:
 
       - name: Generate Prisma client
         run: npm run db:generate
+
+      - name: Build shared packages
+        run: npm run build -w packages/db && npm run build -w packages/shared
 
       # The service container is plain Postgres; the auth-hook migration grants
       # to roles only Supabase creates.
